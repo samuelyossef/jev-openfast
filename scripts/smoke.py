@@ -28,10 +28,14 @@ def main():
             for state in agent.run():
                 history = state["history"]
                 print(
-                    state["elapsed_ms"], "ms", len(history), "actions",
-                    history[-1]["action"] if history else "", flush=True,
+                    state["elapsed_ms"],
+                    "ms",
+                    len(history),
+                    "actions",
+                    history[-1]["action"] if history else "",
+                    flush=True,
                 )
-                (output / "state.json").write_text(json.dumps(state, indent=2))
+                (output / "state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
                 if len(history) >= args.max_actions:
                     raise RuntimeError(f"Diagnostic stopped at {args.max_actions} actions")
         finally:
@@ -39,7 +43,7 @@ def main():
             try:
                 state["verification_text"] = agent.browser.evaluate("document.body.innerText")
             finally:
-                (output / "state.json").write_text(json.dumps(state, indent=2))
+                (output / "state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
         assert state["status"] == "done"
         assert state["page"]["url"].endswith("#casa-flora")
         assert "Your filters: Design · Free cancellation enabled · Destination Lisbon" in state["verification_text"]
@@ -50,7 +54,7 @@ def main():
             "actions": len(state["history"]),
         }
         print(json.dumps(result, indent=2))
-        (output / "summary.json").write_text(json.dumps(result, indent=2))
+        (output / "summary.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

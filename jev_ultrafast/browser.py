@@ -10,39 +10,66 @@ from browser_harness.admin import ensure_daemon
 from browser_harness.helpers import cdp
 
 # Atomically read visible content and controls, preserving actual DOM node identity.
-READ_STATE = Path(__file__).with_name("snapshot.js").read_text()
+READ_STATE = Path(__file__).with_name("snapshot.js").read_text(encoding="utf-8")
 MARKER = f"(() => {{ const state={READ_STATE}; return state?.marker ?? null; }})()"
+
 
 class StalePage(ValueError):
     """A decision no longer refers to the observed page."""
 
 
+def navigating(error):
+    """CDP reports a document swap mid-evaluation as a protocol error, not a JS exception."""
+    message = str(error).lower()
+    return "context" in message or "navigat" in message
+
+
 class Browser:
     def __init__(self, url):
+        self.after_input = None
+        self.target = None
         ensure_daemon()
         self.target = cdp("Target.createTarget", url="about:blank", background=True)["targetId"]
-        self.session = cdp("Target.attachToTarget", targetId=self.target, flatten=True)["sessionId"]
-        self.call("Emulation.setDeviceMetricsOverride", width=1120, height=780, deviceScaleFactor=1, mobile=False)
-        # Keep rAF/menus rendering in an owned background tab, without activating the user's Chrome tab.
-        self.call("Emulation.setFocusEmulationEnabled", enabled=True)
-        self.call("Page.navigate", url=url)
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            if self.evaluate("document.readyState") == "complete":
-                break
-            time.sleep(0.02)
+        try:
+            self.session = cdp("Target.attachToTarget", targetId=self.target, flatten=True)["sessionId"]
+            self.call("Emulation.setDeviceMetricsOverride", width=1120, height=780, deviceScaleFactor=1, mobile=False)
+            # Keep rAF/menus rendering in an owned background tab, without activating the user's Chrome tab.
+            self.call("Emulation.setFocusEmulationEnabled", enabled=True)
+            error = self.call("Page.navigate", url=url).get("errorText")
+            if error:
+                raise RuntimeError(f"Navigation failed: {error}")
+            # The tab starts on about:blank, which is already complete; wait until the requested document commits.
+            ready = "document.readyState === 'complete'"
+            if url != "about:blank":
+                ready += " && location.href !== 'about:blank'"
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                try:
+                    if self.evaluate(ready):
+                        break
+                except StalePage:
+                    pass
+                time.sleep(0.02)
+        except BaseException:
+            self.close()
+            raise
 
     def call(self, method, **params):
         return cdp(method, session_id=self.session, **params)
 
     def evaluate(self, expression):
-        response = self.call("Runtime.evaluate", expression=expression, returnByValue=True)
+        try:
+            response = self.call("Runtime.evaluate", expression=expression, returnByValue=True)
+        except RuntimeError as error:
+            if navigating(error):
+                raise StalePage("Document changed during evaluation") from None
+            raise
         if response.get("exceptionDetails"):
             raise StalePage("Document changed during evaluation")
         return response.get("result", {}).get("value")
 
     def observe(self, screenshot=True):
-        if getattr(self, "after_input", None):
+        if self.after_input:
             action, self.after_input = self.after_input, None
             # This is read-only and happens after execution was logged, even if navigation interrupts it.
             try:
@@ -68,22 +95,23 @@ class Browser:
                         else requestAnimationFrame(ready);
                       };
                       requestAnimationFrame(ready);
-                    }))(""" + json.dumps(action) + ")",
+                    }))("""
+                    + json.dumps(action)
+                    + ")",
                     awaitPromise=True,
                     returnByValue=True,
                 )
             except RuntimeError:
                 pass
-        for attempt in range(10):
+        # Real navigations take longer than one frame; only a changing page pays for this wait.
+        deadline = time.monotonic() + 5
+        while True:
             try:
-                return browser_operation(
-                    {"operation": "observe", "session": self.session, "screenshot": screenshot}
-                )
+                return browser_operation({"operation": "observe", "session": self.session, "screenshot": screenshot})
             except StalePage:
-                if attempt == 9:
-                    raise
-                time.sleep(0.02)
-        raise StalePage("Page did not settle")
+                if time.monotonic() >= deadline:
+                    raise StalePage("Page did not settle") from None
+                time.sleep(0.05)
 
     def fresh(self, page, action=None):
         if action is not None and action["kind"] in {"click", "select"}:
@@ -125,7 +153,13 @@ def browser_operation(request):
         return cdp(method, session_id=session, **params)
 
     def evaluate(expression):
-        result = call("Runtime.evaluate", expression=expression, returnByValue=True)
+        try:
+            result = call("Runtime.evaluate", expression=expression, returnByValue=True)
+        except RuntimeError as error:
+            # Reads may retry after a document swap; mutations never do.
+            if operation == "observe" and navigating(error):
+                raise StalePage("Document changed during evaluation") from None
+            raise
         if result.get("exceptionDetails"):
             if operation == "act" and request["action"]["kind"] == "select":
                 raise RuntimeError("Dropdown execution was interrupted; inspect before retrying.")
@@ -141,7 +175,8 @@ def browser_operation(request):
             if type(action["node"]) is not int:
                 raise ValueError("Invalid observed node")
             # Code-owned node IDs refer to actual observed elements, never model-generated selectors.
-            target = evaluate("""(action => {
+            target = evaluate(
+                """(action => {
               const e=window.__jevFast?.nodes.get(action.node);
               if (!e?.isConnected || e.matches(':disabled') || e.closest('[aria-disabled="true"],[inert]') ||
                   !e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})) return null;
@@ -157,7 +192,10 @@ def browser_operation(request):
                 e.dispatchEvent(new Event('change',{bubbles:true}));
               }
               return {x,y};
-            })(""" + json.dumps(action) + ")")
+            })("""
+                + json.dumps(action)
+                + ")"
+            )
             if target is None:
                 if kind == "select":
                     raise RuntimeError("Dropdown execution was not confirmed; inspect before retrying.")

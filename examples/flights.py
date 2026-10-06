@@ -53,9 +53,9 @@ def main():
     finally:
         state = agent.snapshot()
         state["verification"] = verify(state["page"])
-        (folder / "state.json").write_text(json.dumps(state, indent=2))
+        (folder / "state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
         (folder / "session.json").write_text(
-            json.dumps({"target": agent.browser.target, "session": agent.browser.session})
+            json.dumps({"target": agent.browser.target, "session": agent.browser.session}), encoding="utf-8"
         )
         if not args.keep_open:
             agent.close()

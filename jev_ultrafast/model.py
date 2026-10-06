@@ -12,6 +12,10 @@ from .questions import NEXT_ACTION, TARGET, TEXT_VALUE
 CLIENT = httpx.Client(http2=True, timeout=25)
 
 
+class MissingValue(ValueError):
+    """The text helper reported that the goal does not supply the field value."""
+
+
 def post_json(url, key, body):
     for attempt in range(3):
         try:
@@ -117,14 +121,17 @@ def choose(state, goal, history):
     }
     started = time.perf_counter()
     result = post_json("https://api.typesafe.ai/v1/systemone", os.environ["TYPESAFE_API_KEY"], body)
-    operation_answer = validate_choice(result["answers"].get("operation", {}), operations)
+    answers = result.get("answers") if isinstance(result, dict) else None
+    if not isinstance(answers, dict):
+        raise ValueError("Invalid TypeSafe response; no action executed.")
+    operation_answer = validate_choice(answers.get("operation", {}), operations)
     operation = operation_answer["choice"]
     target = None
     target_answer = None
     probabilities = {}
     if operation in targets:
         # Unused target heads cannot cause an action. Validate the head selected by the operation.
-        target_answer = validate_choice(result["answers"].get(operation.lower() + "_target", {}), targets[operation])
+        target_answer = validate_choice(answers.get(operation.lower() + "_target", {}), targets[operation])
         target = target_answer["choice"]
         choice = targets[operation][target]["id"]
         probabilities = {a["id"]: target_answer["probabilities"][index] for index, a in targets[operation].items()}
@@ -140,8 +147,8 @@ def choose(state, goal, history):
         "operation_probabilities": operation_answer["probabilities"],
         "target_probabilities": target_answer["probabilities"] if target_answer else {},
         "target_confidence": target_answer["confidence"] if target_answer else None,
-        "raw_answers": result["answers"],
-        "model": result["model"],
+        "raw_answers": answers,
+        "model": result.get("model", "unknown"),
         "usage": result.get("usage", {}),
         "latency_ms": round((time.perf_counter() - started) * 1000),
         "request": body,
@@ -161,8 +168,8 @@ def field_text(context):
     key = os.environ.get("TEXT_MODEL_API_KEY")
     if not key:
         raise ValueError("TYPE_TEXT needs TEXT_MODEL_API_KEY; no text is hardcoded or guessed by the executor.")
-    base = os.environ.get("TEXT_MODEL_BASE_URL", "https://api.deepseek.com/v1").rstrip("/")
-    model = os.environ.get("TEXT_MODEL", "deepseek-chat")
+    base = os.environ.get("TEXT_MODEL_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    model = os.environ.get("TEXT_MODEL", "inception/mercury-2.5")
     reasoning = {"thinking": {"type": "disabled"}} if "api.deepseek.com/" in base else {"reasoning": {"effort": "low"}}
     if os.environ.get("TEXT_MODEL_REASONING") == "none":
         reasoning = {"reasoning": {"enabled": False}}
@@ -186,9 +193,13 @@ def field_text(context):
     )
     try:
         output = json.loads(result["choices"][0]["message"]["content"])
+        if output == {"text": None}:
+            raise MissingValue("Goal does not supply this field's value; nothing typed.")
         value = output["text"]
         if set(output) != {"text"} or not isinstance(value, str) or not value.strip() or len(value) > 2000:
             raise ValueError()
+    except MissingValue:
+        raise
     except (ValueError, KeyError, TypeError):
         raise ValueError("Text helper returned no valid field value; nothing typed.") from None
     return value, {
