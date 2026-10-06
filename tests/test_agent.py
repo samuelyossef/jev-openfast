@@ -115,10 +115,18 @@ def test_click_cannot_consume_a_text_target(monkeypatch):
 
 def test_target_head_receives_control_state_and_full_next_step_rules(monkeypatch):
     p = page()
-    p["actions"].insert(0, {
-        "id": "toggle", "kind": "click", "label": "Free cancellation", "node": 30,
-        "role": "checkbox", "checked": "true", "selected": False,
-    })
+    p["actions"].insert(
+        0,
+        {
+            "id": "toggle",
+            "kind": "click",
+            "label": "Free cancellation",
+            "node": 30,
+            "role": "checkbox",
+            "checked": "true",
+            "selected": False,
+        },
+    )
 
     def post(_url, _key, body):
         questions = body["questions"]
@@ -171,6 +179,7 @@ def runner():
         "history": [],
         "decisions": [],
         "status": "predicted",
+        "stop_reason": None,
         "started_at": time.perf_counter(),
         "record": False,
         "text_calls": [],
@@ -261,9 +270,18 @@ def test_interrupted_dropdown_mutation_cannot_be_retried_as_stale(monkeypatch, r
     cdp = Mock(return_value=response)
     monkeypatch.setattr(browser, "cdp", cdp)
     with pytest.raises(RuntimeError, match="Dropdown execution"):
-        browser_operation({"operation": "act", "session": "test", "action": {
-            "id": "e1", "kind": "select", "node": 1, "value": "Design",
-        }})
+        browser_operation(
+            {
+                "operation": "act",
+                "session": "test",
+                "action": {
+                    "id": "e1",
+                    "kind": "select",
+                    "node": 1,
+                    "value": "Design",
+                },
+            }
+        )
     assert cdp.call_count == 1
 
 
@@ -318,3 +336,76 @@ def test_navigation_during_prediction_reobserves_without_action(runner):
     assert runner.state["status"] == "ready"
     assert runner.state["decision"] is None
     runner.state["browser"].act.assert_not_called()
+
+
+def test_snapshot_script_is_read_as_utf8():
+    from jev_ultrafast.browser import READ_STATE
+
+    # The select-label separator must survive on cp1252 Windows; model.action_space splits on it.
+    assert "' → '" in READ_STATE
+
+
+def test_missing_text_value_blocks_instead_of_raising(runner, monkeypatch):
+    monkeypatch.setattr(loop, "field_text", Mock(side_effect=model.MissingValue("nothing typed")))
+    state = runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert state["status"] == "blocked"
+    assert state["stop_reason"] == "nothing typed"
+    runner.state["browser"].act.assert_not_called()
+
+
+def test_decision_budget_blocks_without_calling_the_model(runner, monkeypatch):
+    monkeypatch.setattr(loop, "choose", Mock(side_effect=AssertionError("model called")))
+    runner.state.update(status="ready", decisions=[{}] * (loop.MAX_STEPS * 2))
+    state = runner.command("predict")
+    assert state["status"] == "blocked"
+    assert "decision budget" in state["stop_reason"]
+
+
+def test_malformed_typesafe_answers_raise_value_error(monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", Mock(return_value={"model": "m"}))
+    with pytest.raises(ValueError, match="Invalid TypeSafe"):
+        model.choose(page(), "goal", [])
+
+
+def test_observe_waits_through_a_document_swap(monkeypatch):
+    import jev_ultrafast.browser as browser
+
+    p = page()
+    cdp = Mock(side_effect=[RuntimeError("Execution context was destroyed."), {"result": {"value": p}}])
+    monkeypatch.setattr(browser, "cdp", cdp)
+    monkeypatch.setattr(browser.time, "sleep", lambda _s: None)
+    b = browser.Browser.__new__(browser.Browser)
+    b.session, b.after_input = "test", None
+    assert b.observe(screenshot=False)["actions"] == p["actions"]
+    assert cdp.call_count == 2
+
+
+def test_unrelated_browser_errors_are_not_retried(monkeypatch):
+    import jev_ultrafast.browser as browser
+
+    cdp = Mock(side_effect=RuntimeError("daemon is not running"))
+    monkeypatch.setattr(browser, "cdp", cdp)
+    b = browser.Browser.__new__(browser.Browser)
+    b.session, b.after_input = "test", None
+    with pytest.raises(RuntimeError, match="daemon"):
+        b.observe(screenshot=False)
+    assert cdp.call_count == 1
+
+
+def test_failed_navigation_raises_and_closes_the_tab(monkeypatch):
+    import jev_ultrafast.browser as browser
+
+    def cdp(method, **_params):
+        return {
+            "Target.createTarget": {"targetId": "t1"},
+            "Target.attachToTarget": {"sessionId": "s1"},
+            "Page.navigate": {"errorText": "net::ERR_NAME_NOT_RESOLVED"},
+        }.get(method, {})
+
+    calls = Mock(side_effect=cdp)
+    monkeypatch.setattr(browser, "cdp", calls)
+    monkeypatch.setattr(browser, "ensure_daemon", lambda: None)
+    with pytest.raises(RuntimeError, match="ERR_NAME_NOT_RESOLVED"):
+        browser.Browser("https://example.invalid/")
+    calls.assert_any_call("Target.closeTarget", targetId="t1")

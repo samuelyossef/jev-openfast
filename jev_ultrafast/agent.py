@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from .browser import Browser, StalePage
-from .model import action_space, choose, field_context, field_text
+from .model import MissingValue, action_space, choose, field_context, field_text
 from .questions import MAX_STEPS
 
 
@@ -31,6 +31,7 @@ class Agent:
             decision=None,
             history=[],
             status="ready",
+            stop_reason=None,
             plan=plan,
             plan_index=0,
             decisions=[],
@@ -48,6 +49,12 @@ class Agent:
             **{k: v for k, v in self.state.items() if k != "browser"},
             "elements": action_space(self.state["page"]["actions"])[0],
         }
+
+    def stop(self, reason):
+        state = self.state
+        state["status"], state["stop_reason"] = "blocked", reason
+        state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
+        return self.snapshot()
 
     def command(self, name, body=None):
         body = body or {}
@@ -73,7 +80,7 @@ class Agent:
             if state["status"] in {"done", "blocked"}:
                 raise ValueError("This run has stopped. Start a fresh demo.")
             if len(state["decisions"]) >= MAX_STEPS * 2:
-                raise ValueError("Reached the demo's model-call budget")
+                return self.stop(f"Reached the {MAX_STEPS * 2}-decision budget")
             state["decision"] = choose(state["page"], state["goal"], state["history"])
             state["decisions"].append(
                 {
@@ -94,14 +101,15 @@ class Agent:
                 if not state["browser"].fresh(page):
                     state["status"] = "ready"
                     raise StalePage("Page changed since the decision. Choose again.")
-                state["status"] = "done" if selected == "DONE" else "blocked"
-                state["plan_index"] = int(selected == "DONE")
+                if selected == "BLOCKED":
+                    return self.stop("Jev chose BLOCKED")
+                state["status"] = "done"
+                state["plan_index"] = 1
                 state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
                 return self.snapshot()
             action = next(a for a in page["actions"] if a["id"] == selected)
             if len(state["history"]) >= MAX_STEPS:
-                state["status"] = "blocked"
-                raise ValueError(f"Stopped at the {MAX_STEPS}-action demo budget")
+                return self.stop(f"Reached the {MAX_STEPS}-action budget")
             text, helper = None, None
             if action["kind"] == "fill":
                 if not state["browser"].fresh(page):
@@ -110,7 +118,10 @@ class Agent:
                 if self.pending_text and self.pending_text[0] == context:
                     _, text, helper = self.pending_text
                 else:
-                    text, helper = field_text(context)
+                    try:
+                        text, helper = field_text(context)
+                    except MissingValue as error:
+                        return self.stop(str(error))
                     self.pending_text = (context, text, helper)
                     state["text_calls"].append({**helper, "field": action["label"], "value": text})
             # Browser.act checks freshness immediately before input, including after text generation.
@@ -151,11 +162,9 @@ class Agent:
                     base64.b64decode(state["page"]["screenshot"])
                 )
             repeated = state["history"][-3:]
-            state["status"] = (
-                "blocked"
-                if len(repeated) == 3 and all(h["page_changed"] is False and h["kind"] != "wait" for h in repeated)
-                else "ready"
-            )
+            if len(repeated) == 3 and all(h["page_changed"] is False and h["kind"] != "wait" for h in repeated):
+                return self.stop("No page change after 3 actions")
+            state["status"] = "ready"
         else:
             raise ValueError("Unknown command")
         return self.snapshot()

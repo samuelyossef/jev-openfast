@@ -86,7 +86,10 @@ function render() {
     done: "Jev reports complete · inspect the page",
     blocked: "Stopped · no supported next action",
   };
-  $("status").textContent = labels[state.status] || state.status;
+  $("status").textContent =
+    state.status === "blocked" && state.stop_reason
+      ? `Stopped · ${state.stop_reason}`
+      : labels[state.status] || state.status;
   if (!page) {
     controls();
     return;

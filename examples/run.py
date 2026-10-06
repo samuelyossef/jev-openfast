@@ -13,3 +13,5 @@ with Agent(args.url, args.goal) as agent:
     for state in agent.run():
         print(f"{state['elapsed_ms']:>5} ms  {len(state['history'])} actions  {state['status']}")
     print(state["page"]["url"])
+    if state.get("stop_reason"):
+        print("Stopped:", state["stop_reason"])

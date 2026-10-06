@@ -42,21 +42,26 @@ def main():
             "dropdown option": "document.querySelector('select').options[1].text='Coastal'",
         }
         for label, expression in mutations.items():
-            browser.evaluate("document.querySelector('#target').style.display='block'; "
-                             "document.querySelector('#target').disabled=false")
+            browser.evaluate(
+                "document.querySelector('#target').style.display='block'; "
+                "document.querySelector('#target').disabled=false"
+            )
             page = browser.observe(screenshot=False)
             browser.evaluate(expression)
             assert not browser.fresh(page), label
             passed.append(label + " invalidates")
 
-        browser.evaluate("document.querySelector('#target').disabled=false; "
-                         "document.querySelector('#target').style.display='block'")
+        browser.evaluate(
+            "document.querySelector('#target').disabled=false; document.querySelector('#target').style.display='block'"
+        )
         page = browser.observe(screenshot=False)
         action = next(a for a in page["actions"] if a["label"] == "Delete account")
         # A textless overlay does not alter the model's semantic state, but must block a click.
-        browser.evaluate("const cover=document.createElement('div'); "
-                         "cover.style.cssText='position:fixed;inset:0;z-index:9999;background:white'; "
-                         "document.body.append(cover)")
+        browser.evaluate(
+            "const cover=document.createElement('div'); "
+            "cover.style.cssText='position:fixed;inset:0;z-index:9999;background:white'; "
+            "document.body.append(cover)"
+        )
         assert browser.fresh(page)
         try:
             browser.act(action, page)
@@ -67,7 +72,9 @@ def main():
         assert browser.evaluate("window.clicks") == 1
         passed.append("overlay blocked before input")
 
-        browser.evaluate("document.body.innerHTML=" + repr("""
+        browser.evaluate(
+            "document.body.innerHTML="
+            + repr("""
           <form><p id="price">Total $10</p>
           <button type="button" id="buy">Buy</button>
           <label>Search <input id="query" role="combobox" aria-controls="suggestions"></label>
@@ -80,7 +87,8 @@ def main():
           <select id="category" aria-label="Category">
             <option>All</option><option>Design</option><option disabled>Unavailable</option>
           </select></form><aside id="unrelated">News</aside>
-        """))
+        """)
+        )
         page = browser.observe(screenshot=False)
         buy = next(a for a in page["actions"] if a["label"] == "Buy")
         browser.evaluate("document.querySelector('#unrelated').textContent='New unrelated news'")
@@ -113,9 +121,11 @@ def main():
         assert browser.evaluate("document.querySelector('#category').value") == "Design"
         passed.append("native dropdown selects an observed option")
 
-        browser.evaluate("document.querySelector('#query').addEventListener('input',()=>setTimeout(()=>{"
-                         "document.querySelector('#suggestions').innerHTML='<div role=option>Generated</div>'"
-                         "},60))")
+        browser.evaluate(
+            "document.querySelector('#query').addEventListener('input',()=>setTimeout(()=>{"
+            "document.querySelector('#suggestions').innerHTML='<div role=option>Generated</div>'"
+            "},60))"
+        )
         page = browser.observe(screenshot=False)
         field = next(a for a in page["actions"] if a["kind"] == "fill")
         browser.act(field, page, text="Generated")

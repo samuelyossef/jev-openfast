@@ -67,8 +67,10 @@ finally:
     state["verification"] = verify(state["final_page"])
     state["source_hashes"] = source_hashes
     state["recording_errors"] = errors
-    (folder / "state.json").write_text(json.dumps(state, indent=2))
-    (folder / "session.json").write_text(json.dumps({"target": agent.browser.target, "session": agent.browser.session}))
+    (folder / "state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
+    (folder / "session.json").write_text(
+        json.dumps({"target": agent.browser.target, "session": agent.browser.session}), encoding="utf-8"
+    )
 print(json.dumps(state["verification"], indent=2))
 print("Screencast frames", len(list(frames.glob("*.jpg"))), "errors", errors)
 if not state["verification"]["passed"]:
