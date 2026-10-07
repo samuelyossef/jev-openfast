@@ -51,7 +51,7 @@ pwsh -File scripts/start_windows.ps1
 ```
 
 **macOS / Linux:** connect Browser Harness to
-Chrome (`uv run browser-harness --doctor`, allow remote debugging when prompted), then:
+Chrome (enable remote debugging; `uv run jev --doctor` checks the setup), then:
 
 ```bash
 uv run --env-file .env jev

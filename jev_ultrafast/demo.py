@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 import secrets
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -286,6 +287,9 @@ def restore_selected():
 
 def main():
     load_environment()
+    if "--doctor" in sys.argv[1:]:
+        from .doctor import run
+        raise SystemExit(run(PORT))
     restore_selected()
     atexit.register(close_browser)
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
