@@ -67,6 +67,17 @@ async function post(name: string, body: Record<string, unknown>): Promise<Snapsh
     headers: { 'Content-Type': 'application/json', 'X-Demo-Token': token, ...manualHeaders(body.session_id) },
     body: JSON.stringify({ locale: currentLocale(), ...body }),
   });
+  if (response.status === 403) {
+    // The server was restarted (new page token) or the page was opened from another address.
+    // Reload once to pick up the current token; never loop.
+    let last = 0;
+    try { last = Number(sessionStorage.getItem('jev.reloadedFor403') || 0); } catch { /* storage unavailable */ }
+    if (Date.now() - last > 10000) {
+      try { sessionStorage.setItem('jev.reloadedFor403', String(Date.now())); } catch { /* storage unavailable */ }
+      window.location.reload();
+    }
+    throw new Error(translate(currentLocale(), 'staleServer'));
+  }
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || translate(currentLocale(), 'operationError'));
   return result;

@@ -44,7 +44,9 @@ if ($managedChrome -and -not $port) { throw "The Jev Chrome profile is open but 
 
 if (-not $port) {
     if (Test-Path -LiteralPath $activePort) { Remove-Item -LiteralPath $activePort -Force }
-    Start-Process -FilePath $chrome -ArgumentList @(
+    # Created through WMI so Chrome is not part of this launcher's job: stopping or restarting the launcher
+    # (or the terminal that ran it) must not kill the browser that a running Jev server still points to.
+    $arguments = @(
         "--headless=new",
         "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=0",
@@ -52,7 +54,11 @@ if (-not $port) {
         "--no-first-run",
         "--no-default-browser-check",
         "about:blank"
-    ) -WindowStyle Hidden
+    ) -join " "
+    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+        CommandLine = "`"$chrome`" $arguments"
+    }
+    if ($created.ReturnValue -ne 0) { throw "Could not start the isolated Chrome (code $($created.ReturnValue))." }
     for ($attempt = 0; $attempt -lt 40 -and -not $port; $attempt++) {
         Start-Sleep -Milliseconds 250
         $port = Get-CdpPort
