@@ -25,7 +25,8 @@ folder = Path(args.output)
 folder.mkdir(parents=True, exist_ok=False)
 source_hashes = {
     p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-    for p in (source / "jev_ultrafast").iterdir() if p.suffix in {".py", ".js"}
+    for p in (source / "jev_ultrafast").iterdir()
+    if p.suffix in {".py", ".js"}
 }
 raw = browser_module.cdp
 calls = defaultdict(list)
@@ -65,6 +66,6 @@ finally:
     }
     state["browser_version"] = agent.browser.call("Browser.getVersion")["product"]
     state["final_page"] = final
-    (folder / "state.json").write_text(json.dumps(state, indent=2))
+    (folder / "state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
     agent.close()
 print("VERIFIED", state["verification"]["passed"], "ERROR", error, flush=True)

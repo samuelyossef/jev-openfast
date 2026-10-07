@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from .browser import Browser, StalePage
-from .model import action_space, choose, field_context, field_text
+from .model import MissingValue, action_space, choose, field_context, field_text
 from .questions import MAX_STEPS
 from .timing import Timings, timed
 
@@ -146,6 +146,8 @@ class Agent:
                 state["status"] = "ready"
                 raise StalePage("Page changed since the decision. Choose again.")
             state["status"] = "done" if selected == "DONE" else "blocked"
+            if selected == "BLOCKED":
+                state["stop_reason"] = "Jev chose BLOCKED"
             state["plan_index"] = int(selected == "DONE")
             state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
             return
@@ -155,7 +157,13 @@ class Agent:
             raise ValueError(f"Stopped at the {MAX_STEPS}-action demo budget")
         text, helper = None, None
         if action["kind"] == "fill":
-            text, helper = self.prepare_text(action, page)
+            try:
+                text, helper = self.prepare_text(action, page)
+            except MissingValue as error:
+                # Nothing was typed; only the user can supply this value.
+                state["status"], state["stop_reason"] = "blocked", str(error)
+                state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
+                return
         # Record the attempt before browser input, including an uncertain transport result.
         entry = {
             "step": len(state["history"]) + 1,
@@ -211,6 +219,8 @@ class Agent:
         # A manual-control return restarts the window: a human may have changed what the next action does.
         unchanged = [h["page_changed"] is False and h["kind"] not in {"wait", "manual"} for h in repeated]
         state["status"] = "blocked" if len(repeated) == 3 and all(unchanged) else "ready"
+        if state["status"] == "blocked":
+            state["stop_reason"] = "No page change after 3 actions"
         recent = executed[-6:]
         if (
             len(recent) == 6

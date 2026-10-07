@@ -577,3 +577,54 @@ def test_blocked_reason_is_consumed_only_for_blocked(monkeypatch, answer, expect
     monkeypatch.setattr(model, "post_json", post)
     d = model.choose(page(), "Log in and find a book", [])
     assert d["choice"] == "BLOCKED" and d["blocked_reason"] == expected
+
+
+def test_snapshot_script_is_read_as_utf8():
+    from jev_ultrafast.browser import READ_STATE
+    # The select-label separator must survive on cp1252 Windows; model.action_space splits on it.
+    assert "' → '" in READ_STATE
+
+
+def test_missing_text_value_blocks_instead_of_raising(runner, monkeypatch):
+    monkeypatch.setattr(loop, "field_text", Mock(side_effect=model.MissingValue("nothing typed")))
+    state = runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert state["status"] == "blocked" and state["stop_reason"] == "nothing typed"
+    assert state["history"] == [] and not runner.state["browser"].act.called
+
+
+def test_malformed_typesafe_answers_raise_value_error(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", Mock(return_value={"model": "m"}))
+    with pytest.raises(ValueError, match="Invalid TypeSafe response"):
+        model.choose(page(), "goal", [])
+
+
+def test_null_text_is_reported_as_missing_value(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", Mock(return_value={
+        "choices": [{"message": {"content": '{"text": null}'}}]}))
+    with pytest.raises(model.MissingValue):
+        model.field_text({"goal": "x"})
+
+
+def test_observe_waits_through_a_document_swap(monkeypatch):
+    from jev_ultrafast import browser
+    p = page()
+    cdp = Mock(side_effect=[RuntimeError("Execution context was destroyed."), {"result": {"value": p}}])
+    monkeypatch.setattr(browser, "cdp", cdp)
+    monkeypatch.setattr(browser.time, "sleep", lambda _s: None)
+    b = browser.Browser.__new__(browser.Browser)
+    b.session, b.after_input = "test", None
+    assert b.observe(screenshot=False)["actions"] == p["actions"]
+    assert cdp.call_count == 2
+
+
+def test_unrelated_browser_errors_are_not_retried(monkeypatch):
+    from jev_ultrafast import browser
+    cdp = Mock(side_effect=RuntimeError("daemon is not running"))
+    monkeypatch.setattr(browser, "cdp", cdp)
+    b = browser.Browser.__new__(browser.Browser)
+    b.session, b.after_input = "test", None
+    with pytest.raises(RuntimeError, match="daemon"):
+        b.observe(screenshot=False)
+    assert cdp.call_count == 1

@@ -14,6 +14,7 @@ from . import assistant
 from .agent import Agent
 from .browser import StalePage, validate_viewport
 from .manual import Manual
+from .model import MissingValue
 from .preview import Preview
 from .questions import MAX_STEPS
 from .timing import Timings, timed
@@ -591,6 +592,10 @@ class ChatSession:
                 self._publish()
                 self.agent.command("act", {"fingerprint": page["fingerprint"]})
                 stale_attempts = 0
+            except MissingValue:
+                # Nothing was typed: the goal does not contain this field's value, so the user must provide it.
+                self._handoff("PERSONAL_DATA")
+                return
             except StalePage:
                 # Reobserve and choose anew. An already logged mutation is never repeated.
                 self.agent.state["decision"] = None

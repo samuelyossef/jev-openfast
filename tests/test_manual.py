@@ -362,6 +362,17 @@ def test_exit_manual_keeps_the_task_paused(session, monkeypatch):
     assert session.agent.state["history"][-1]["kind"] == "manual"
 
 
+def test_value_only_the_user_has_opens_the_personal_data_handoff(session, monkeypatch):
+    from jev_ultrafast import agent as loop
+    monkeypatch.setattr(loop, "field_text", lambda _context: (_ for _ in ()).throw(
+        chat.MissingValue("Goal does not supply this field's value; nothing typed.")))
+    view = send(session, "digite meu CPF no campo")
+    assert view["chat_status"] == "paused"
+    assert view["messages"][-1]["kind"] == "handoff"
+    assert view["messages"][-1]["handoff"]["code"] == "PERSONAL_DATA"
+    assert session.agent.browser.mutations == []
+
+
 def test_no_progress_asks_for_help_instead_of_finishing(session, monkeypatch):
     monkeypatch.setattr(agent, "choose", blocked(None))
     send(session)

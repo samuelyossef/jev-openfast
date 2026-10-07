@@ -21,6 +21,12 @@ class StalePage(ValueError):
     """A decision no longer refers to the observed page."""
 
 
+def navigating(error):
+    """CDP reports a document swap mid-evaluation as a protocol error, not a JS exception."""
+    message = str(error).lower()
+    return "context" in message or "navigat" in message
+
+
 def validate_viewport(width, height):
     if any(type(value) is not int or not 1 <= value <= 4096 for value in (width, height)):
         raise ValueError("A largura e a altura devem ser inteiros entre 1 e 4096 pixels.")
@@ -67,8 +73,10 @@ class Browser:
         while time.monotonic() < deadline:
             try:
                 # DOMContentLoaded includes deferred scripts, but does not wait for images.
-                if self.evaluate("document.readyState==='complete' || "
-                                 "performance.getEntriesByType('navigation')[0]?.domContentLoadedEventEnd>0"):
+                # The tab starts on about:blank, which is already complete; wait for the requested document.
+                if self.evaluate("location.href!=='about:blank' && (document.readyState==='complete' || "
+                                 "performance.getEntriesByType('navigation')[0]?.domContentLoadedEventEnd>0)"
+                                 if url != "about:blank" else "document.readyState==='complete'"):
                     break
             except StalePage:
                 pass
@@ -78,7 +86,12 @@ class Browser:
         return cdp(method, session_id=self.session, _response_timeout=15, **params)
 
     def evaluate(self, expression):
-        response = self.call("Runtime.evaluate", expression=expression, returnByValue=True)
+        try:
+            response = self.call("Runtime.evaluate", expression=expression, returnByValue=True)
+        except RuntimeError as error:
+            if navigating(error):
+                raise StalePage("Document changed during evaluation") from None
+            raise
         if response.get("exceptionDetails"):
             raise StalePage("Document changed during evaluation")
         return response.get("result", {}).get("value")
@@ -117,16 +130,17 @@ class Browser:
                 )
             except (RuntimeError, TimeoutError):
                 pass
-        for attempt in range(10):
+        # Real navigations take longer than one frame; only a changing page pays for this wait.
+        deadline = time.monotonic() + 5
+        while True:
             try:
                 return browser_operation(
                     {"operation": "observe", "session": self.session, "screenshot": screenshot}
                 )
             except StalePage:
-                if attempt == 9:
-                    raise
-                time.sleep(0.02)
-        raise StalePage("Page did not settle")
+                if time.monotonic() >= deadline:
+                    raise StalePage("Page did not settle") from None
+                time.sleep(0.05)
 
     @timed("guard")
     def fresh(self, page, action=None):
@@ -228,7 +242,13 @@ def browser_operation(request):
         return cdp(method, session_id=session, **params)
 
     def evaluate(expression):
-        result = call("Runtime.evaluate", expression=expression, returnByValue=True)
+        try:
+            result = call("Runtime.evaluate", expression=expression, returnByValue=True)
+        except RuntimeError as error:
+            # Reads may retry after a document swap; mutations never do.
+            if operation == "observe" and navigating(error):
+                raise StalePage("Document changed during evaluation") from None
+            raise
         if result.get("exceptionDetails"):
             if operation == "act" and request["action"]["kind"] == "select":
                 raise RuntimeError("Dropdown execution was interrupted; inspect before retrying.")

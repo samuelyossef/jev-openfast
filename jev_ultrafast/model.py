@@ -15,6 +15,10 @@ DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
+class MissingValue(ValueError):
+    """The text helper reported that the goal does not supply the field value."""
+
+
 def openrouter_key():
     saved_key = load_openrouter_key()
     if saved_key:
@@ -158,14 +162,17 @@ def choose(state, goal, history, *, conversation=None, verification_feedback=Non
         body["state"]["verification_feedback"] = verification_feedback
     started = time.perf_counter()
     result = post_json(DECISIONS_URL, openrouter_key(), body)
-    operation_answer = validate_choice(result["answers"].get("operation", {}), operations)
+    answers = result.get("answers") if isinstance(result, dict) else None
+    if not isinstance(answers, dict):
+        raise ValueError("Invalid TypeSafe response; no action executed.")
+    operation_answer = validate_choice(answers.get("operation", {}), operations)
     operation = operation_answer["choice"]
     target = None
     target_answer = None
     probabilities = {}
     if operation in targets:
         # Unused target heads cannot cause an action. Validate the head selected by the operation.
-        target_answer = validate_choice(result["answers"].get(operation.lower() + "_target", {}), targets[operation])
+        target_answer = validate_choice(answers.get(operation.lower() + "_target", {}), targets[operation])
         target = target_answer["choice"]
         choice = targets[operation][target]["id"]
         probabilities = {a["id"]: target_answer["probabilities"][index] for index, a in targets[operation].items()}
@@ -175,7 +182,7 @@ def choose(state, goal, history, *, conversation=None, verification_feedback=Non
     blocked_reason = None
     if operation == "BLOCKED":
         try:
-            blocked_reason = validate_choice(result["answers"].get("blocked_reason", {}), BLOCKED_REASONS)["choice"]
+            blocked_reason = validate_choice(answers.get("blocked_reason", {}), BLOCKED_REASONS)["choice"]
         except ValueError:
             # The reason only words the request for help; it can never cause an action.
             blocked_reason = "OTHER"
@@ -189,8 +196,8 @@ def choose(state, goal, history, *, conversation=None, verification_feedback=Non
         "target_probabilities": target_answer["probabilities"] if target_answer else {},
         "target_confidence": target_answer["confidence"] if target_answer else None,
         "blocked_reason": blocked_reason,
-        "raw_answers": result["answers"],
-        "model": result["model"],
+        "raw_answers": answers,
+        "model": result.get("model", "unknown"),
         "usage": result.get("usage", {}),
         "latency_ms": round((time.perf_counter() - started) * 1000),
         "request": body,
@@ -248,9 +255,13 @@ def field_text(context):
     )
     try:
         output = json.loads(result["choices"][0]["message"]["content"])
+        if output == {"text": None}:
+            raise MissingValue("Goal does not supply this field's value; nothing typed.")
         value = output["text"]
         if set(output) != {"text"} or not isinstance(value, str) or not value.strip() or len(value) > 2000:
             raise ValueError()
+    except MissingValue:
+        raise
     except (ValueError, KeyError, TypeError, IndexError):
         raise ValueError("Text helper returned no valid field value; nothing typed.") from None
     return value, {
