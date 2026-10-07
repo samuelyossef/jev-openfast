@@ -35,7 +35,7 @@ A small text model writes words only when the operation is `TYPE_TEXT`.
   archive and delete. Stored locally in SQLite. After a restart, conversations come back as
   interrupted and nothing is replayed.
 - **Settings** (`/settings`): General (interface language, dark theme) and Model (OpenRouter API key).
-  The sidebar footer shows v0.1.0 with GitHub and LinkedIn links.
+  The footer shows the app version (read from the package, also available as `uv run jev --version`) with GitHub and LinkedIn links.
 
 ## Run it
 

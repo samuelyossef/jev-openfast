@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from urllib.request import urlopen
 
+from . import __version__
 from .model import openrouter_key_status
 
 PROFILES = (
@@ -34,6 +35,7 @@ def probe(url):
 
 
 def checks(port):
+    yield "JEV OpenFast Browser", True, __version__
     yield "Python 3.12+", sys.version_info >= (3, 12), sys.version.split()[0]
     key = openrouter_key_status()
     yield "OpenRouter key", key["openrouter_key_configured"], (

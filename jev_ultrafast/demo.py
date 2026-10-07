@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from . import __version__
 from .browser import validate_viewport
 from .chat import ChatSession, validate_message, validate_url
 from .conversations import ConversationStore
@@ -51,6 +52,7 @@ def response_state(compact=False, owner_token=None):
         **state,
         "text_model": os.environ.get("TEXT_MODEL", "inception/mercury-2.5"),
         "max_steps": MAX_STEPS,
+        "version": __version__,
         **openrouter_key_status(),
     }
 
@@ -286,6 +288,9 @@ def restore_selected():
 
 
 def main():
+    if "--version" in sys.argv[1:]:
+        print(f"JEV OpenFast Browser {__version__}")
+        return
     load_environment()
     if "--doctor" in sys.argv[1:]:
         from .doctor import run
@@ -293,7 +298,7 @@ def main():
     restore_selected()
     atexit.register(close_browser)
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"JEV OpenFast Browser: {ORIGIN}", flush=True)
+    print(f"JEV OpenFast Browser {__version__}: {ORIGIN}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

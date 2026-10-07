@@ -40,6 +40,13 @@ cd frontend && npm ci && npm run lint && npm run build
 - Keep changes focused, add or update tests, and match the surrounding style (ruff, 120 columns).
 - Update the README or `docs/` when behavior or configuration changes.
 
+## Versions
+
+The version lives in one place, `version` in `pyproject.toml` ([semantic versioning](https://semver.org/)).
+The app reads it from the installed package metadata: it shows in **Settings**, in `uv run jev --version`,
+in `uv run jev --doctor` and in the server banner. To release: bump `version`, add a section to
+[CHANGELOG.md](CHANGELOG.md), run `uv sync` so the installed metadata updates, then tag `vX.Y.Z`.
+
 ## Reporting bugs and ideas
 
 Open an issue and include the output of `uv run jev --doctor`. For vulnerabilities, follow
