@@ -1,0 +1,11 @@
+<!doctype html><html><meta charset="utf-8"><style>body{margin:10px;font:16px Arial}canvas{display:block;background:#eee;margin-top:12px;touch-action:none}</style>
+<label><input type="checkbox" id="captcha"> Sou humano (simulado)</label>
+<canvas width="300" height="100" id="slider"></canvas>
+<script>
+document.querySelector('#captcha').onchange=e=>parent.postMessage({captcha:e.target.checked},'*');
+const c=document.querySelector('canvas'),ctx=c.getContext('2d');let start=null;
+const draw=x=>{ctx.clearRect(0,0,300,100);ctx.fillStyle='#2563eb';ctx.fillRect(x,25,40,40);ctx.fillStyle='#000';ctx.fillText('Arraste até a direita',80,15)};draw(10);
+c.onpointerdown=e=>{start=e.offsetX;c.setPointerCapture(e.pointerId)};
+c.onpointermove=e=>{if(start!==null)draw(Math.max(0,Math.min(260,e.offsetX-20)))};
+c.onpointerup=e=>{if(start!==null&&e.offsetX-start>150)parent.postMessage({drag:true},'*');start=null};
+</script></html>

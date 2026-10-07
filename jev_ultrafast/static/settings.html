@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="demo-token" content="__TOKEN__" />
+    <title>Jev · Configurações</title>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <a href="/" aria-label="Jev, página inicial" class="brand">browser<span>use</span> <i>×</i> TypeSafe</a>
+      <nav class="top-menu" aria-label="Menu principal">
+        <div class="local"><span class="dot"></span> Jev Ultrafast</div>
+        <a class="menu-icon active" href="/settings" aria-label="Configurações" aria-current="page" title="Configurações">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8 4.2v-1.4l-1.8-.6a6.7 6.7 0 0 0-.6-1.4l.9-1.7-1-1-1.7.9a6.7 6.7 0 0 0-1.4-.6L13.8 5h-1.5l-.6 1.9a6.7 6.7 0 0 0-1.4.6l-1.7-.9-1 1 .9 1.7a6.7 6.7 0 0 0-.6 1.4l-1.9.6v1.4l1.9.6a6.7 6.7 0 0 0 .6 1.4l-.9 1.7 1 1 1.7-.9a6.7 6.7 0 0 0 1.4.6l.6 1.9h1.5l.6-1.9a6.7 6.7 0 0 0 1.4-.6l1.7.9 1-1-.9-1.7a6.7 6.7 0 0 0 .6-1.4l1.8-.6Z"/></svg>
+        </a>
+      </nav>
+    </header>
+    <main class="settings-main">
+      <a class="back-link" href="/">← Voltar ao assistente</a>
+      <section class="settings-card">
+        <div class="settings-card-header">
+          <p class="eyebrow">PROVEDOR DE MODELOS</p>
+          <h1>OpenRouter</h1>
+          <p>Configure a chave usada pelo Jev para solicitar decisões e texto.</p>
+        </div>
+        <form id="provider-form" class="provider-form">
+          <label for="openrouter-key">API Key do OpenRouter</label>
+          <div class="provider-entry">
+            <input id="openrouter-key" type="password" maxlength="1024" autocomplete="new-password" placeholder="Cole sua API Key" required />
+            <button id="save-key" type="submit" class="primary">Salvar chave</button>
+          </div>
+          <p id="provider-status" role="status" aria-live="polite">Verificando configuração…</p>
+          <small>A chave é enviada somente ao servidor local. No Windows, fica protegida pelo sistema e não é exibida novamente.</small>
+        </form>
+      </section>
+    </main>
+    <script type="module" src="/settings.js"></script>
+  </body>
+</html>

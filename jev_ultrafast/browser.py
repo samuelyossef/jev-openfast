@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -9,31 +10,72 @@ from pathlib import Path
 from browser_harness.admin import ensure_daemon
 from browser_harness.helpers import cdp
 
+from .timing import timed
+
 # Atomically read visible content and controls, preserving actual DOM node identity.
-READ_STATE = Path(__file__).with_name("snapshot.js").read_text()
+READ_STATE = Path(__file__).with_name("snapshot.js").read_text(encoding="utf-8")
+PRIVACY = Path(__file__).with_name("privacy.js").read_text(encoding="utf-8")
 MARKER = f"(() => {{ const state={READ_STATE}; return state?.marker ?? null; }})()"
 
 class StalePage(ValueError):
     """A decision no longer refers to the observed page."""
 
 
+def validate_viewport(width, height):
+    if any(type(value) is not int or not 1 <= value <= 4096 for value in (width, height)):
+        raise ValueError("A largura e a altura devem ser inteiros entre 1 e 4096 pixels.")
+    return width, height
+
+
 class Browser:
-    def __init__(self, url):
+    def __init__(self, url, *, viewport=None):
+        width, height = validate_viewport(*(viewport or (1120, 780)))
         ensure_daemon()
-        self.target = cdp("Target.createTarget", url="about:blank", background=True)["targetId"]
-        self.session = cdp("Target.attachToTarget", targetId=self.target, flatten=True)["sessionId"]
-        self.call("Emulation.setDeviceMetricsOverride", width=1120, height=780, deviceScaleFactor=1, mobile=False)
-        # Keep rAF/menus rendering in an owned background tab, without activating the user's Chrome tab.
-        self.call("Emulation.setFocusEmulationEnabled", enabled=True)
-        self.call("Page.navigate", url=url)
+        self.target = None
+        try:
+            self.target = cdp(
+                "Target.createTarget", url="about:blank",
+                background=os.environ.get("JEV_HEADLESS_BROWSER") != "1", _response_timeout=15,
+            )["targetId"]
+            self.session = cdp(
+                "Target.attachToTarget", targetId=self.target, flatten=True, _response_timeout=15
+            )["sessionId"]
+            self.set_viewport(width, height)
+            self.call("Page.enable")
+            self.call("Page.addScriptToEvaluateOnNewDocument", source=PRIVACY, runImmediately=True)
+            # Keep rAF/menus rendering in an owned background tab, without activating the user's Chrome tab.
+            self.call("Emulation.setFocusEmulationEnabled", enabled=True)
+            self.navigate(url)
+        except Exception:
+            try:
+                self.close()
+            except Exception:
+                pass
+            raise
+
+    def set_viewport(self, width, height):
+        width, height = validate_viewport(width, height)
+        self.call("Emulation.setDeviceMetricsOverride", width=width, height=height, deviceScaleFactor=1, mobile=False)
+
+    @timed("navigation")
+    def navigate(self, url):
+        """Navigate the owned tab once; callers record the request before observing."""
+        result = self.call("Page.navigate", url=url)
+        if result.get("errorText"):
+            raise RuntimeError(f"Navegação falhou: {result['errorText']}")
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            if self.evaluate("document.readyState") == "complete":
-                break
+            try:
+                # DOMContentLoaded includes deferred scripts, but does not wait for images.
+                if self.evaluate("document.readyState==='complete' || "
+                                 "performance.getEntriesByType('navigation')[0]?.domContentLoadedEventEnd>0"):
+                    break
+            except StalePage:
+                pass
             time.sleep(0.02)
 
     def call(self, method, **params):
-        return cdp(method, session_id=self.session, **params)
+        return cdp(method, session_id=self.session, _response_timeout=15, **params)
 
     def evaluate(self, expression):
         response = self.call("Runtime.evaluate", expression=expression, returnByValue=True)
@@ -41,6 +83,7 @@ class Browser:
             raise StalePage("Document changed during evaluation")
         return response.get("result", {}).get("value")
 
+    @timed("observation")
     def observe(self, screenshot=True):
         if getattr(self, "after_input", None):
             action, self.after_input = self.after_input, None
@@ -72,7 +115,7 @@ class Browser:
                     awaitPromise=True,
                     returnByValue=True,
                 )
-            except RuntimeError:
+            except (RuntimeError, TimeoutError):
                 pass
         for attempt in range(10):
             try:
@@ -85,10 +128,11 @@ class Browser:
                 time.sleep(0.02)
         raise StalePage("Page did not settle")
 
+    @timed("guard")
     def fresh(self, page, action=None):
-        if action is not None and action["kind"] in {"click", "select"}:
+        if action is not None and action["kind"] in {"click", "fill", "select", "press_enter"}:
             node = action["node"]
-            if type(node) is not int:
+            if type(node) is not int or page["guards"].get(str(node)) is None:
                 return False
             current = self.evaluate(
                 "(() => { const c=window.__jevFast; "
@@ -97,6 +141,7 @@ class Browser:
             return current == [page["page_key"], page["guards"].get(str(node))]
         return self.evaluate(MARKER) == page["marker"]
 
+    @timed("execution")
     def act(self, action, page, text=None):
         if not self.fresh(page, action):
             raise StalePage("Page changed since this decision. Observe again.")
@@ -106,10 +151,68 @@ class Browser:
         self.after_input = action if action["kind"] != "wait" else None
         return result
 
+    @timed("capture")
+    def capture(self):
+        return cdp("Page.captureScreenshot", session_id=self.session, _response_timeout=2,
+                   format="jpeg", quality=72).get("data")
+
+    @timed("preview_guard")
+    def preview_fresh(self, page):
+        if not self.fresh(page):
+            return False
+        targets = {action["node"]: action["rect"] for action in page["actions"] if "rect" in action}
+        return self.evaluate("""(targets => Object.entries(targets).every(([id,expected]) => {
+          const node=window.__jevFast?.nodes.get(Number(id));
+          if (!node?.isConnected) return false;
+          const r=node.getBoundingClientRect();
+          return r.x===expected.x && r.y===expected.y && r.width===expected.w && r.height===expected.h;
+        }))(""" + json.dumps(targets) + ")") is True
+
     def close(self):
         if self.target:
-            cdp("Target.closeTarget", targetId=self.target)
+            cdp("Target.closeTarget", targetId=self.target, _response_timeout=15)
             self.target = None
+
+    def manual_context(self):
+        return self.evaluate("(() => { window.__jevPrivacy?.collect(); const p=window.__jevPrivacy; "
+                             "return {document:String(performance.timeOrigin)+':'+(p?.locationVersion() || 0),"
+                             "w:innerWidth,h:innerHeight,url:p ? p.url(location.href) : location.href,"
+                             "title:p ? p.scrub(document.title) : document.title,"
+                             "protected:p?.protected() || false}; })()")
+
+    def manual_mode(self, active):
+        self.evaluate(f"window.__jevPrivacy.manual={json.dumps(active)}")
+
+    def protect_manual_text(self, text, group):
+        # Chrome retains the redaction data across navigation; Python retains no values.
+        source = f"window.__jevPrivacy.remember({json.dumps(text)},{json.dumps(group)});"
+        self.call("Page.addScriptToEvaluateOnNewDocument", source=source)
+        self.evaluate(source + "window.__jevPrivacy.protect();")
+
+    def manual_event(self, event, group):
+        kind = event["type"]
+        if kind == "text":
+            self.protect_manual_text(event["text"], group)
+            self.call("Input.insertText", text=event["text"])
+        elif kind == "key":
+            if event["key"] == "Backspace" and event["action"] == "down":
+                source = f"window.__jevPrivacy.backspace({json.dumps(group)});"
+                self.call("Page.addScriptToEvaluateOnNewDocument", source=source)
+                self.evaluate(source)
+            self.evaluate("window.__jevPrivacy.protect()")
+            codes = {"Enter":13,"Tab":9,"Backspace":8,"Escape":27,"Delete":46,
+                     "ArrowLeft":37,"ArrowUp":38,"ArrowRight":39,"ArrowDown":40,
+                     "Home":36,"End":35,"PageUp":33,"PageDown":34,"Shift":16,"Control":17,"Alt":18,"Meta":91}
+            code = codes.get(event["key"], ord(event["key"].upper()) if len(event["key"]) == 1 else 0)
+            self.call("Input.dispatchKeyEvent", type="keyDown" if event["action"] == "down" else "keyUp",
+                      key=event["key"], windowsVirtualKeyCode=code, modifiers=event["modifiers"])
+        else:
+            self.call("Input.dispatchMouseEvent", type={"down":"mousePressed","up":"mouseReleased",
+                      "move":"mouseMoved","wheel":"mouseWheel"}[event["action"]],
+                      x=event["x"], y=event["y"], modifiers=event["modifiers"],
+                      **({"deltaX":event["deltaX"],"deltaY":event["deltaY"]} if kind == "wheel" else
+                         {"button":"left" if event["action"] != "move" else "none",
+                          "buttons":event["buttons"],"clickCount":event["clickCount"]}))
 
 
 def fingerprint(state):
@@ -136,7 +239,9 @@ def browser_operation(request):
         action = request["action"]
         kind = action["kind"]
         if kind == "scroll":
-            call("Input.dispatchMouseEvent", type="mouseWheel", x=550, y=650, deltaX=0, deltaY=action["delta"])
+            width, height = evaluate("[innerWidth, innerHeight]")
+            call("Input.dispatchMouseEvent", type="mouseWheel", x=width / 2, y=height / 2,
+                 deltaX=0, deltaY=action["delta"])
         elif kind != "wait":
             if type(action["node"]) is not int:
                 raise ValueError("Invalid observed node")
@@ -166,6 +271,11 @@ def browser_operation(request):
                 x, y = target["x"], target["y"]
                 for event in ("mousePressed", "mouseReleased"):
                     call("Input.dispatchMouseEvent", type=event, x=x, y=y, button="left", clickCount=1)
+                if kind == "press_enter":
+                    call("Input.dispatchKeyEvent", type="keyDown", key="Enter", code="Enter",
+                         windowsVirtualKeyCode=13, text="\r")
+                    call("Input.dispatchKeyEvent", type="keyUp", key="Enter", code="Enter",
+                         windowsVirtualKeyCode=13)
                 if kind == "fill":
                     call(
                         "Input.dispatchKeyEvent",
@@ -190,5 +300,11 @@ def browser_operation(request):
         raise StalePage("Document is navigating")
     info["fingerprint"] = fingerprint(info)
     if request.get("screenshot", True):
-        info["screenshot"] = call("Page.captureScreenshot", format="jpeg", quality=72)["data"]
+        try:
+            screenshot = call("Page.captureScreenshot", format="jpeg", quality=72).get("data")
+            if screenshot:
+                info["screenshot"] = screenshot
+        except (RuntimeError, TimeoutError):
+            # The image is optional; the structured observation remains usable.
+            pass
     return info

@@ -1,0 +1,22 @@
+<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Controle manual local</title>
+<style>body{margin:12px;font:16px Arial}input,textarea,button{font:inherit;padding:6px;box-sizing:border-box}input{width:180px}label{display:block;margin:6px 0}.otp{width:38px}iframe{width:340px;height:180px;border:1px solid}#space{height:1500px}#status{background:#eef;padding:8px}</style>
+<h1>Intervenção local</h1><p id="clock"></p>
+<label>Usuário <input id="user" aria-label="Usuário"></label>
+<label>Senha <input id="password" aria-label="Senha" type="password" autocomplete="current-password"></label>
+<div>Código <input class="otp" id="digit0" autocomplete="one-time-code" maxlength="1"><input class="otp" id="digit1" autocomplete="one-time-code" maxlength="1"><input class="otp" id="digit2" autocomplete="one-time-code" maxlength="1"><input class="otp" id="digit3" autocomplete="one-time-code" maxlength="1"></div>
+<label>Texto <textarea id="note" aria-label="Texto"></textarea></label>
+<button id="double">Duplo clique</button><button id="login">Entrar</button><button id="publish">Publicar</button>
+<p id="status">Aguardando autenticação</p><p id="echo"></p>
+<iframe title="CAPTCHA simulado" src="__FRAME_ORIGIN__/frame"></iframe><div id="space"></div><p id="bottom">Fim da página</p>
+<script>
+window.counts={input:0,double:0,login:0,publish:0,captcha:false,drag:false};
+let ticks=0;const clockTimer=setInterval(()=>document.querySelector('#clock').textContent='Página dinâmica '+(++ticks),50);
+const digits=[...document.querySelectorAll('.otp')];
+for(const [i,e] of digits.entries())e.addEventListener('input',()=>{if(e.value&&digits[i+1])digits[i+1].focus()});
+document.addEventListener('input',()=>{window.counts.input++;document.querySelector('#echo').textContent=
+ [document.querySelector('#user').value,document.querySelector('#password').value,digits.map(e=>e.value).join(''),document.querySelector('#note').value].join(' / ')});
+document.querySelector('#double').ondblclick=()=>window.counts.double++;
+window.addEventListener('message',e=>{if(e.origin==='__FRAME_ORIGIN__')Object.assign(window.counts,e.data)});
+document.querySelector('#login').onclick=()=>{window.counts.login++;if(window.counts.captcha&&window.counts.drag&&digits.every(e=>e.value)&&document.querySelector('#password').value){clearInterval(clockTimer);document.querySelector('#status').textContent='Autenticação concluída'}};
+document.querySelector('#publish').onclick=()=>{window.counts.publish++;document.querySelector('#status').textContent='Publicação concluída'};
+</script></html>

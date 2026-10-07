@@ -1,143 +1,80 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="demo-token" content="__TOKEN__" />
-    <title>Jev Ultrafast · Browser Use</title>
+    <title>Jev · Assistente de navegação</title>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <header>
-      <a href="/" aria-label="Homepage" class="brand"
-        >browser<span>use</span> <i>×</i> TypeSafe</a
-      >
-      <div class="local"><span class="dot"></span> Jev Ultrafast</div>
+      <a href="/" aria-label="Jev, página inicial" class="brand">browser<span>use</span> <i>×</i> TypeSafe</a>
+      <nav class="top-menu" aria-label="Menu principal">
+        <div class="local"><span class="dot"></span> Jev Ultrafast</div>
+        <a class="menu-icon" href="/settings" aria-label="Configurações" title="Configurações">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8 4.2v-1.4l-1.8-.6a6.7 6.7 0 0 0-.6-1.4l.9-1.7-1-1-1.7.9a6.7 6.7 0 0 0-1.4-.6L13.8 5h-1.5l-.6 1.9a6.7 6.7 0 0 0-1.4.6l-1.7-.9-1 1 .9 1.7a6.7 6.7 0 0 0-.6 1.4l-1.9.6v1.4l1.9.6a6.7 6.7 0 0 0 .6 1.4l-.9 1.7 1 1 1.7-.9a6.7 6.7 0 0 0 1.4.6l.6 1.9h1.5l.6-1.9a6.7 6.7 0 0 0 1.4-.6l1.7.9 1-1-.9-1.7a6.7 6.7 0 0 0 .6-1.4l1.8-.6Z"/></svg>
+        </a>
+      </nav>
     </header>
     <main>
       <section class="intro">
-        <div>
-          <p class="eyebrow">A BROWSER THAT CHOOSES</p>
-          <h1>Every page is a set of possibilities.</h1>
-          <p>
-            Jev picks the next action. A small language model handles the words.
-            <a href="/demo.mp4" target="_blank" rel="noopener">Watch the real Google Flights run ↗</a>
-          </p>
-        </div>
-        <div class="model-tag">jev-latest <span>+ text helper</span></div>
+        <div><p class="eyebrow">ASSISTENTE DE NAVEGAÇÃO</p><h1>Seu navegador, em conversa.</h1><p>Descreva o que precisa. Jev identifica o site e navega para você.</p></div>
       </section>
-      <form id="task-form">
-        <div class="task-label">
-          <label for="goal">Give it a task</label
-          ><select id="scenario" name="scenario" aria-label="Demo scenario">
-            <option value="flights">Google Flights · real web</option>
-            <option value="travel">Travel planner · fixture</option>
-            <option value="research">Reading room · fixture</option>
-          </select>
-        </div>
-        <div class="task-row">
-          <textarea id="goal" name="goal" rows="5">
-Find one-way flights from Zurich to London on September 20, 2026, for one adult in economy. Stop when matching flight options are visible. Do not select or book a flight.</textarea
-          ><button type="submit" id="start" class="primary">
-            Start demo <span>↗</span>
-          </button>
-        </div>
-      </form>
-      <div class="toolbar">
-        <div class="status">
-          <span class="dot" id="status-dot"></span
-          ><span id="status" role="status">Ready to explore</span>
-        </div>
-        <div class="controls"><label class="overlay-control"><input name="pace" id="pace" type="checkbox"> Slow motion</label>
-          <label class="overlay-control"
-            ><input name="overlays" id="overlays" type="checkbox" checked />
-            Targets</label
-          ><button type="button" id="choose" disabled>Choose next</button
-          ><button type="button" id="execute" disabled>Execute choice</button
-          ><button type="button" id="auto" disabled>Run automatically</button
-          ><button type="button" id="stop" hidden>Pause</button>
-        </div>
-      </div>
-      <div id="error" role="alert" hidden></div>
-      <section class="workspace">
-        <div class="browser-panel">
-          <div class="browser-bar">
-            <div class="traffic"><b></b><b></b><b></b></div>
-            <span id="url">Local demo browser</span
-            ><span class="live">LIVE</span>
+      <section class="chat-layout" aria-label="Conversa e navegador">
+        <div class="chat-panel">
+          <div class="chat-heading"><div><span class="dot"></span><h2>Converse com Jev</h2></div><button type="button" id="new-session" hidden>Nova conversa</button></div>
+          <div class="assistant-tools"><label class="overlay-control"><input id="overlays" type="checkbox" /> Alvos</label></div>
+          <div id="messages" class="messages" role="log" aria-label="Mensagens da conversa" aria-live="polite" aria-relevant="additions text">
+            <div class="chat-welcome"><span class="welcome-mark" aria-hidden="true">↗</span><h3>O que vamos fazer hoje?</h3><p>Peça uma tarefa ou faça uma pergunta. Jev encontra o destino quando necessário.</p></div>
           </div>
-          <div class="viewport" id="viewport">
-            <div class="empty" id="empty">
-              <p class="empty-symbol">[ ↗ ]</p>
-              <h2>Watch the decision happen.</h2>
-              <p>
-                Start a task to see a real browser, its available<br />actions,
-                and the model's choice.
-              </p>
+          <div id="error" role="alert" hidden></div>
+          <div class="chat-progress"><span class="dot" id="status-dot"></span><span id="status" role="status">Descreva o que deseja fazer.</span></div>
+          <form id="chat-form" class="chat-form">
+            <label class="sr-only" for="message">Sua mensagem</label>
+            <textarea id="message" name="message" rows="2" maxlength="2000" placeholder="Peça uma tarefa ou faça uma pergunta…" required></textarea>
+            <div class="composer-footer"><span id="composer-hint">Enter envia · Shift + Enter quebra a linha</span><button type="submit" id="send" class="primary" disabled>Enviar <span aria-hidden="true">↑</span></button></div>
+          </form>
+        </div>
+        <div class="preview-panel">
+          <div class="browser-panel">
+            <div class="browser-bar"><div class="traffic" aria-hidden="true"><b></b><b></b><b></b></div><span id="url">Nenhum site aberto</span><div class="browser-bar-controls controls"><button type="button" id="stop" hidden>Pausar</button><button type="button" id="resume" hidden>Continuar</button></div><span class="live">PRÉVIA</span></div>
+            <div class="viewport" id="viewport">
+              <div class="empty" id="empty"><p class="empty-symbol">[ ↗ ]</p><h2>Uma página. Muitas possibilidades.</h2><p>A página controlada pelo assistente<br />aparecerá aqui.</p></div>
+              <img id="screenshot" alt="Prévia atual da página controlada pelo assistente" hidden /><div id="targets" hidden></div>
             </div>
-            <img
-              id="screenshot"
-              alt="Live screenshot of the controlled browser"
-              hidden
-            />
-            <div id="targets"></div>
-          </div>
-          <div class="browser-footer">
-            <span id="page-title">Isolated demo tab</span
-            ><span>AX tree → typed actions → CDP</span>
-          </div>
-        </div>
-        <aside>
-          <div class="aside-header">
-            <div>
-              <p class="eyebrow">NEXT ACTION</p>
-              <h2 id="choice-title">Waiting for a page</h2>
+            <div class="manual-panel" id="manual-panel" role="region" aria-label="Controle manual" hidden>
+              <span id="manual-status" role="status"></span>
+              <button type="button" id="manual-start">Assumir controle</button>
+              <button type="button" id="manual-recover" hidden>Atualizar e recuperar controle</button>
+              <button type="button" id="manual-continue" hidden>Continuar com Jev</button>
+              <button type="button" id="manual-exit" hidden>Sair do controle manual</button>
+              <small id="manual-help" hidden>Clique na página para digitar. Texto protegido; o assistente está pausado.</small>
+              <span id="manual-error" role="alert" hidden></span>
             </div>
-            <span id="action-count">0 options</span>
+            <div class="browser-footer"><span id="page-title">Aguardando um site</span><strong id="task-time" class="task-time" hidden></strong></div>
           </div>
-          <div id="plan" class="plan"></div>
-          <div class="metrics">
-            <div><span>Decision time</span><strong id="latency">—</strong></div>
-            <div>
-              <span>Target confidence</span><strong id="confidence">—</strong>
-            </div>
-            <div>
-              <span>Operation</span
-              ><strong id="completion">—</strong>
-            </div>
-          </div>
-          <div id="operation-choices" class="operation-choices"></div>
-          <p class="distribution-label">
-            Indexed elements
-            <span id="ranking-note">Choose next to rank</span>
-          </p>
-          <div id="choices" class="choices">
-            <p class="muted">Available actions will appear here.</p>
-          </div>
-          <p class="aside-note">
-            Operation and target are separate choices in one request.<br />Text is generated only for TYPE_TEXT.
-          </p>
-        </aside>
-      </section>
-      <section class="trace">
-        <div class="trace-heading">
-          <h2>Decision trail <span id="step-count">0 actions</span></h2>
-          <button type="button" id="download" disabled>Export trace ↓</button>
-        </div>
-        <div id="history">
-          <p class="muted">Each executed action leaves an observed result.</p>
+          <p class="preview-note" id="preview-error" role="alert" hidden></p>
+          <p class="preview-note">O assistente pede sua confirmação antes de ações como publicar, enviar dados ou concluir uma compra.</p>
         </div>
       </section>
-      <details>
-        <summary>What the model sees</summary>
-        <pre id="model-state">
-Start a demo to inspect its structured state.</pre>
+      <details class="inspector">
+        <summary>Detalhes da execução <span>Decisões, elementos e histórico</span></summary>
+        <div class="inspector-grid">
+          <aside>
+            <div class="aside-header"><div><p class="eyebrow">DECISÃO</p><h2 id="choice-title">Aguardando uma tarefa</h2></div><span id="action-count">0 elementos</span></div>
+            <div id="plan" class="plan"></div>
+            <div class="metrics"><div><span>Tempo da decisão</span><strong id="latency">—</strong></div><div><span>Confiança no alvo</span><strong id="confidence">—</strong></div><div><span>Operação</span><strong id="completion">—</strong></div></div>
+            <div id="operation-choices" class="operation-choices"></div>
+            <p class="distribution-label">Elementos observados <span id="ranking-note">Sem decisão</span></p>
+            <div id="choices" class="choices"><p class="muted">Os elementos da página aparecerão aqui.</p></div>
+          </aside>
+          <section class="trace"><div class="trace-heading"><h2>Histórico <span id="step-count">0 tentativas</span></h2></div><div id="history"><p class="muted">As ações solicitadas aparecerão aqui.</p></div></section>
+        </div>
+        <details class="model-details"><summary>Contexto estruturado do modelo</summary><pre id="model-state">Envie uma tarefa para inspecionar o contexto.</pre></details>
       </details>
-      <footer>
-        <span>Browser Use × TypeSafe · Experimental baseline</span
-        ><span id="helper">Text helper loading</span>
-      </footer>
+      <footer><span>Jev Ultrafast · Conversa local</span><span id="helper">Modelo de texto carregando</span></footer>
     </main>
     <script type="module" src="/app.js"></script>
   </body>

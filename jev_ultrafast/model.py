@@ -1,4 +1,4 @@
-"""TypeSafe makes choices; an optional small OpenAI-compatible model writes field values."""
+"""Jev chooses observed browser actions; the text model supplies field values."""
 
 import json
 import math
@@ -7,13 +7,33 @@ import time
 
 import httpx
 
-from .questions import NEXT_ACTION, TARGET, TEXT_VALUE
+from .questions import BLOCKED_REASON, BLOCKED_REASONS, NEXT_ACTION, TARGET, TEXT_VALUE
+from .secrets_store import load_openrouter_key, openrouter_key_source
 
 CLIENT = httpx.Client(http2=True, timeout=25)
+DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
+CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
-def post_json(url, key, body):
+def openrouter_key():
+    saved_key = load_openrouter_key()
+    if saved_key:
+        return saved_key
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not key:
+        raise ValueError("OPENROUTER_API_KEY is required before a model request.")
+    return key
+
+
+def openrouter_key_status():
+    source = openrouter_key_source(os.environ.get("OPENROUTER_API_KEY", ""))
+    return {"openrouter_key_configured": source != "missing", "openrouter_key_source": source}
+
+
+def post_json(url, key, body, *, on_attempt=None):
     for attempt in range(3):
+        if on_attempt:
+            on_attempt()
         try:
             response = CLIENT.post(url, json=body, headers={"Authorization": f"Bearer {key}"})
         except httpx.HTTPError:
@@ -48,7 +68,8 @@ def validate_choice(answer, ids):
 def action_space(actions):
     """One index per observed element; each operation has its own valid target choices."""
     elements, indices, targets, controls = [], {}, {}, {}
-    operations = {"click": "CLICK", "fill": "TYPE_TEXT", "select": "SELECT"}
+    operations = {"click": "CLICK", "fill": "TYPE_TEXT", "select": "SELECT",
+                  "press_enter": "PRESS_ENTER"}
     for action in actions:
         kind = action["kind"]
         if kind not in operations:
@@ -78,45 +99,65 @@ def action_space(actions):
     return elements, targets, controls
 
 
-def choose(state, goal, history):
+def choose(state, goal, history, *, conversation=None, verification_feedback=None):
     elements, targets, controls = action_space(state["actions"])
     labels = {
         "CLICK": "Click an element, button, menu option, autocomplete suggestion, or calendar day.",
-        "TYPE_TEXT": "Enter or replace text in an editable field. A small LLM will supply the value from the goal.",
+        "TYPE_TEXT": "Enter or replace text using the text model for the selected field.",
         "SELECT": "Select an observed dropdown value.",
+        "PRESS_ENTER": "Press Enter in an observed single-line field to submit or accept its current value.",
     }
     operations = {key: labels[key] for key in targets}
     operations.update({key: value["label"] for key, value in controls.items()})
     operations.update(DONE="Every requirement is visibly satisfied.", BLOCKED="No supported operation can progress.")
     questions = {
-        "operation": {"type": "choice", "criteria": operations, "instructions": {"goal": goal, "rules": NEXT_ACTION}}
+        "operation": {
+            "type": "choice",
+            "criteria": operations,
+            "instructions": f"Goal: {goal}\n{NEXT_ACTION}",
+        }
     }
     for operation, candidates in targets.items():
         questions[operation.lower() + "_target"] = {
             "type": "choice",
             "criteria": {
-                index: {
-                    "element": f"[{index}] {a['label']}",
-                    "current_value": a.get("current_value", a.get("value", "")),
-                    **{k: a[k] for k in ("role", "checked", "selected", "expanded") if k in a},
-                }
+                index: json.dumps(
+                    {
+                        "element": f"[{index}] {a['label']}",
+                        "current_value": a.get("current_value", a.get("value", "")),
+                        **{k: a[k] for k in ("role", "checked", "selected", "expanded") if k in a},
+                    },
+                    ensure_ascii=False,
+                )
                 for index, a in candidates.items()
             },
-            "instructions": {"goal": goal, "operation": operation, "rules": [NEXT_ACTION, TARGET]},
+            "instructions": f"Goal: {goal}\nOperation: {operation}\n{NEXT_ACTION}\n{TARGET}",
         }
+    # Speculative like the target heads: consumed only when the operation is BLOCKED.
+    questions["blocked_reason"] = {
+        "type": "choice",
+        "criteria": BLOCKED_REASONS,
+        "instructions": f"Goal: {goal}\n{BLOCKED_REASON}",
+    }
     body = {
-        "model": os.environ.get("TYPESAFE_MODEL", "jev-latest"),
+        "model": os.environ.get("TYPESAFE_MODEL", "typesafe/jev-1.13"),
         "state": {
-            "page": {k: state[k] for k in ("url", "title", "text")},
+            "page": {**{k: state[k] for k in ("url", "title", "text")},
+                     "human_fields": state.get("human_fields", [])},
             "elements": elements,
             "recent_actions": [
-                {k: h.get(k) for k in ("action", "kind", "text", "page_changed")} for h in history[-10:]
-            ],
+                {k: h.get(k) for k in ("action", "kind", "text", "page_changed", "execution")}
+                for h in history if h.get("execution", "executed") == "executed"
+            ][-10:],
         },
         "questions": questions,
     }
+    if conversation:
+        body["state"]["conversation"] = conversation
+    if verification_feedback:
+        body["state"]["verification_feedback"] = verification_feedback
     started = time.perf_counter()
-    result = post_json("https://api.typesafe.ai/v1/systemone", os.environ["TYPESAFE_API_KEY"], body)
+    result = post_json(DECISIONS_URL, openrouter_key(), body)
     operation_answer = validate_choice(result["answers"].get("operation", {}), operations)
     operation = operation_answer["choice"]
     target = None
@@ -131,6 +172,13 @@ def choose(state, goal, history):
     else:
         choice = controls[operation]["id"] if operation in controls else operation
         probabilities[choice] = operation_answer["probabilities"][operation]
+    blocked_reason = None
+    if operation == "BLOCKED":
+        try:
+            blocked_reason = validate_choice(result["answers"].get("blocked_reason", {}), BLOCKED_REASONS)["choice"]
+        except ValueError:
+            # The reason only words the request for help; it can never cause an action.
+            blocked_reason = "OTHER"
     return {
         "choice": choice,
         "operation": operation,
@@ -140,6 +188,7 @@ def choose(state, goal, history):
         "operation_probabilities": operation_answer["probabilities"],
         "target_probabilities": target_answer["probabilities"] if target_answer else {},
         "target_confidence": target_answer["confidence"] if target_answer else None,
+        "blocked_reason": blocked_reason,
         "raw_answers": result["answers"],
         "model": result["model"],
         "usage": result.get("usage", {}),
@@ -153,27 +202,40 @@ def field_context(goal, action, page, history):
         "goal": goal,
         "field": {k: action.get(k) for k in ("label", "role", "value")},
         "page": {"title": page["title"], "text": page["text"][:6000]},
-        "recent_actions": [{k: h.get(k) for k in ("action", "text")} for h in history[-6:]],
+        "recent_actions": [
+            {k: h.get(k) for k in ("action", "text")}
+            for h in history if h.get("execution", "executed") == "executed"
+        ][-6:],
     }
 
 
 def field_text(context):
-    key = os.environ.get("TEXT_MODEL_API_KEY")
-    if not key:
-        raise ValueError("TYPE_TEXT needs TEXT_MODEL_API_KEY; no text is hardcoded or guessed by the executor.")
-    base = os.environ.get("TEXT_MODEL_BASE_URL", "https://api.deepseek.com/v1").rstrip("/")
-    model = os.environ.get("TEXT_MODEL", "deepseek-chat")
-    reasoning = {"thinking": {"type": "disabled"}} if "api.deepseek.com/" in base else {"reasoning": {"effort": "low"}}
-    if os.environ.get("TEXT_MODEL_REASONING") == "none":
+    key = openrouter_key()
+    model = os.environ.get("TEXT_MODEL", "inception/mercury-2.5")
+    reasoning = {"reasoning": {"effort": "low"}}
+    if os.environ.get("TEXT_MODEL_REASONING", "none") == "none":
         reasoning = {"reasoning": {"enabled": False}}
     started = time.perf_counter()
     result = post_json(
-        base + "/chat/completions",
+        CHAT_URL,
         key,
         {
             "model": model,
             "max_tokens": 1024,
-            "response_format": {"type": "json_object"},
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "field_text",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {"text": {"type": ["string", "null"]}},
+                        "required": ["text"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "provider": {"require_parameters": True},
             **reasoning,
             "messages": [
                 {"role": "system", "content": TEXT_VALUE},
@@ -189,7 +251,7 @@ def field_text(context):
         value = output["text"]
         if set(output) != {"text"} or not isinstance(value, str) or not value.strip() or len(value) > 2000:
             raise ValueError()
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, IndexError):
         raise ValueError("Text helper returned no valid field value; nothing typed.") from None
     return value, {
         "model": model,

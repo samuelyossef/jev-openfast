@@ -22,6 +22,9 @@ def main():
         action = next(a for a in page["actions"] if a["label"] == "Continue")
         browser.evaluate("document.querySelector('#target').style.transform='translateX(200px)'")
         assert browser.fresh(page), "Movement should use fresh geometry, not another model call"
+        assert not browser.preview_fresh(page), "An image must not reuse labels from the previous geometry"
+        assert browser.preview_fresh(browser.observe(screenshot=False))
+        passed.append("preview guards reject old geometry while accepting a fresh paired observation")
         browser.act(action, page)
         assert browser.evaluate("window.clicks") == 1
         passed.append("moving target clicked at its current location")
@@ -85,8 +88,10 @@ def main():
         buy = next(a for a in page["actions"] if a["label"] == "Buy")
         browser.evaluate("document.querySelector('#unrelated').textContent='New unrelated news'")
         assert browser.fresh(page, buy)
+        field = next(a for a in page["actions"] if a["kind"] == "fill")
+        assert browser.fresh(page, field)
         assert not browser.fresh(page)
-        passed.append("click guard accepts unrelated visible updates; terminal guard rejects them")
+        passed.append("click and fill guards accept unrelated visible updates; terminal guard rejects them")
         for label, expression in {
             "nearby price": "document.querySelector('#price').textContent='Total $100'",
             "form value": "document.querySelector('#query').value='changed'",
@@ -98,6 +103,21 @@ def main():
             browser.evaluate(expression)
             assert not browser.fresh(page, buy), label
             passed.append(label + " invalidates action-specific guard")
+
+        for label, expression in {
+            "field read-only": "document.querySelector('#query').readOnly=true",
+            "field replacement": (
+                "document.querySelector('#query').outerHTML=document.querySelector('#query').outerHTML"
+            ),
+            "field context": "document.querySelector('#price').textContent='Total $200'",
+        }.items():
+            browser.evaluate("document.querySelector('#query').readOnly=false")
+            page = browser.observe(screenshot=False)
+            field = next(a for a in page["actions"] if a["kind"] == "fill")
+            browser.evaluate(expression)
+            assert not browser.fresh(page, field), label
+            passed.append(label + " invalidates fill guard before input")
+        browser.evaluate("document.querySelector('#query').readOnly=false")
 
         page = browser.observe(screenshot=False)
         actions = page["actions"]
@@ -113,11 +133,21 @@ def main():
         assert browser.evaluate("document.querySelector('#category').value") == "Design"
         passed.append("native dropdown selects an observed option")
 
+        # An unlabeled dropdown must not be named after all of its options (huge decision requests).
+        browser.evaluate("document.body.insertAdjacentHTML('beforeend',"
+                         "'<select id=unlabeled><option>Alpha</option><option>Beta</option></select>')")
+        labels = [a["label"] for a in browser.observe(screenshot=False)["actions"]
+                  if a["kind"] == "select" and a.get("current_value") == "Alpha"]
+        browser.evaluate("document.querySelector('#unlabeled').remove()")
+        assert labels and all("Alpha Beta" not in label for label in labels), labels
+        passed.append("unlabeled dropdown is not named after all of its options")
+
         browser.evaluate("document.querySelector('#query').addEventListener('input',()=>setTimeout(()=>{"
                          "document.querySelector('#suggestions').innerHTML='<div role=option>Generated</div>'"
                          "},60))")
         page = browser.observe(screenshot=False)
         field = next(a for a in page["actions"] if a["kind"] == "fill")
+        browser.evaluate("document.querySelector('#unrelated').textContent='Another unrelated update'")
         browser.act(field, page, text="Generated")
         page = browser.observe(screenshot=False)
         value = browser.evaluate("document.querySelector('#query').value")
@@ -127,6 +157,20 @@ def main():
         browser.call("Page.navigate", url="about:blank")
         assert not browser.fresh(page, field)
         passed.append("navigation invalidates the old document")
+
+        browser.navigate("data:text/html," + quote("""<!doctype html><title>Search form</title>
+          <form onsubmit="event.preventDefault();document.querySelector('#result').textContent=
+            'Result for '+document.querySelector('#query').value">
+            <label>Search <input id="query" value="books"></label>
+          </form><p id="result"></p>"""))
+        page = browser.observe(screenshot=False)
+        enter = next(a for a in page["actions"] if a["kind"] == "press_enter")
+        assert enter["node"] == next(a for a in page["actions"] if a["kind"] == "fill")["node"]
+        assert not any(a["kind"] == "click" and a.get("role") == "button" for a in page["actions"])
+        browser.act(enter, page)
+        result = browser.observe(screenshot=False)
+        assert "Result for books" in result["text"]
+        passed.append("Enter submits a buttonless search and its result is observed")
     finally:
         browser.close()
     print("\n".join(passed))

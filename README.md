@@ -1,142 +1,154 @@
-<img src="docs/banner.svg" alt="Jev Ultrafast · Browser Use × TypeSafe" width="100%" />
+# Jev Ultrafast
 
-# Jev Ultrafast ⚡
+A local browser assistant. You describe a task in chat; Jev opens a real Chrome tab, picks each
+next action from the elements it actually sees, and checks the result before reporting success.
 
-> [!IMPORTANT]
-> **The Browser Use Cloud waitlist is open.** Get early access to ultrafast browser agents in the cloud.
-> **[Join the waitlist →](https://browser-use.com/ultrafast?utm_source=github&utm_medium=readme&utm_campaign=jev-ultrafast)**
+The model never writes selectors or code. Each page becomes a numbered table of elements; the
+model returns an operation (`CLICK`, `TYPE_TEXT`, `SELECT`, `PRESS_ENTER`, `SCROLL_UP`,
+`SCROLL_DOWN`, `WAIT`, `DONE`, `BLOCKED`) and a target from that table, and the code executes it.
+A small text model writes words only when the operation is `TYPE_TEXT`.
 
-**A browser agent with a dynamic, indexed action space.**
+## Features
 
-Give it one goal. [TypeSafe's Jev](https://docs.typesafe.ai/introduction) picks an operation and an element. A small LLM writes text only when the operation is `TYPE_TEXT`.
+- **Chat** in Português (Brasil), English, Español and Français. Enter sends, Shift+Enter adds a new line.
+- **One owned tab.** The assistant picks the site from your message (a URL, a site name, or a web
+  search), runs automatically, and keeps using the same tab for follow-ups.
+- **Page questions.** Asking about the open page reads a fresh observation. It never clicks or types.
+- **Approval for external commitments.** Sending, submitting, publishing, buying, paying, booking,
+  deleting or changing account settings pauses and asks you first. Approval is renewed if the page changes.
+- **Independent verification.** After `DONE`, the page is checked again and the result is shown as
+  confirmed, not met or unknown. A `DONE` choice is never treated as proof.
+- **Pause, resume, recheck.** Rechecking is read-only.
+- **Live preview** of the browser with execution details: operation, target, confidence, action
+  history and per-stage timings.
+- **Manual control.** Take over the tab with mouse, keyboard and text (logins, one-time codes,
+  CAPTCHAs, canvas). No model calls happen while you drive, and passwords and codes you type are
+  hidden from the assistant.
+- **History.** Recent conversations in the sidebar; **Search** opens the full list with rename,
+  archive and delete. Stored locally in SQLite. After a restart, conversations come back as
+  interrupted and nothing is replayed.
+- **Settings** (`/settings`): General (interface language, dark theme) and Model (OpenRouter API key).
+  The sidebar footer shows v0.0.1 with GitHub and LinkedIn links.
 
-**Zürich → London on Google Flights in 7.1 seconds.** One natural-language goal, actual text generation, and loading waits included.
+## Run it
 
-<a href="docs/demo.mp4"><img src="docs/demo.gif" alt="A real Google Flights search at 1× speed, with generated city names and dynamic operation/target decisions" width="100%" /></a>
-
-[Watch the MP4](docs/demo.mp4) · [Measurements](docs/performance.md) · [Read the loop](jev_ultrafast/agent.py)
-
-## The action space
-
-Every observation produces a new element table:
-
-```text
-[1] button    Change ticket type · Round trip
-[2] combobox  Where from?        · San Francisco
-[3] combobox  Where to?          · empty
-[4] textbox   Departure          · empty
-...
-```
-
-The operations are `CLICK`, `TYPE_TEXT`, `SELECT`, `SCROLL_UP`, `SCROLL_DOWN`, `WAIT`, `DONE`, and `BLOCKED`. Only supported operations and targets are offered.
-
-```text
-                      one TypeSafe request
-                     ┌───────────────────────────┐
-page → element table → operation                 │
-                     │ click_target              │
-                     │ type_text_target          │
-                     │ select_target, if present │
-                     └─────────────┬─────────────┘
-                         use the matching target
-                                   │
-                    CLICK [7] ─────┤──→ browser
-                TYPE_TEXT [3] ─────┘
-                          ↓
-                   small LLM → text → browser
-```
-
-Target questions are speculative. If the operation is `CLICK`, only `click_target` can execute. Two decisions, **one network round trip**. Each target head contains only compatible elements. Native dropdown choices carry an observed element/option index.
-
-There are no site-specific action scripts or prepared field strings in the policy. The Flights example supplies a goal and independently verifies the outcome. The screenshot renderer adds labels afterward; it does not drive the browser.
-
-## Try it
+Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Google Chrome, Node.js (only to rebuild the UI).
 
 ```bash
 git clone https://github.com/browser-use/jev-ultrafast.git
 cd jev-ultrafast
 uv sync
 cp .env.example .env
-# Add TYPESAFE_API_KEY and TEXT_MODEL_API_KEY.
-uv run jev
 ```
 
-Open **http://127.0.0.1:8766** and click **Start demo → Run automatically**. The inspector shows numbered elements, operation probabilities, target probabilities, and executed actions. **Choose next** pauses before execution.
+Add `OPENROUTER_API_KEY` to `.env`, or paste it later in **Settings → Model**. Use a standard
+OpenRouter inference key, not a Management key.
 
-Chrome connects through [Browser Harness](https://github.com/browser-use/browser-harness), installed by `uv sync`. Run `uv run browser-harness --doctor` if it needs connecting. Allow remote debugging in Chrome when prompted.
+**Windows** (starts Jev with an isolated Chrome profile and Browser Harness):
 
-`TEXT_MODEL_API_KEY` is an OpenRouter key in the example configuration. The current demo uses `inception/mercury-2.5` with reasoning disabled. Gemini, GLM, and DeepSeek can also use the OpenAI-compatible text helper; configure the appropriate model, endpoint, and reasoning setting.
+```powershell
+pwsh -File scripts/start_windows.ps1
+```
 
-## Use the library
+**macOS / Linux:** connect [Browser Harness](https://github.com/browser-use/browser-harness) to
+Chrome (`uv run browser-harness --doctor`, allow remote debugging when prompted), then:
+
+```bash
+uv run --env-file .env jev
+```
+
+Open **http://127.0.0.1:8766**. Change the port with `TYPESAFE_DEMO_PORT`.
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OPENROUTER_API_KEY` | empty | Provider key. Can also be saved from Settings. |
+| `TYPESAFE_MODEL` | `typesafe/jev-1.13` | Model that chooses operation and target. |
+| `TEXT_MODEL` | `inception/mercury-2.5` | Small model for `TYPE_TEXT` and chat helpers. |
+| `TEXT_MODEL_REASONING` | `none` | Reasoning setting for the text model. |
+| `TYPESAFE_DEMO_PORT` | `8766` | Local server port. |
+
+A key saved in the interface is encrypted with Windows DPAPI under `artifacts/` and is never
+displayed again. Keys stay on the server; the browser UI never receives them. `.env` is git-ignored.
+
+### Local only
+
+The server listens on `127.0.0.1` and rejects any other `Host` header. It controls a real browser
+profile, so do not expose it to a network or deploy it to a hosting service as is.
+
+## Use it as a library
 
 ```python
 from jev_ultrafast import Agent
 
 with Agent(
-    "https://www.google.com/travel/flights?hl=en",
-    "Find one-way flights from Zurich to London on September 20, 2026, "
-    "for one adult in economy. Stop when matching flight options are visible.",
+    "https://en.wikipedia.org/wiki/Main_Page",
+    "Find and open the Wikipedia article about Gödel's incompleteness theorems.",
 ) as agent:
     for state in agent.run():
         print(state["elapsed_ms"], state["status"])
 ```
 
-Run with `uv run --env-file .env python your_script.py`. The same policy can run a different task:
+Run it with `uv run --env-file .env python your_script.py`. Ready-made examples: `examples/run.py`
+(any URL and goal) and `examples/flights.py` (a Google Flights search that stops at the results and
+never books).
 
-```bash
-uv run --env-file .env python examples/run.py \
-  --url https://en.wikipedia.org/wiki/Main_Page \
-  --goal 'Find and open the Wikipedia article about Gödel’s incompleteness theorems.'
+## How it works
+
+```text
+page → element table → one model request → operation + target → code executes → observe again
 ```
 
-`uv run --env-file .env python examples/flights.py --keep-open` performs the flight search, checks the actual route/date/results, and saves its trace. It does not select or book a flight.
+- One DOM snapshot supplies roles, names, values and visible text. Every node gets a code-owned identity.
+- One request returns the operation and a target for each supported operation; only the selected
+  operation's target is used.
+- Before every mutation, guards compare the page, URL, form values and target context with what the
+  model saw. A stale choice is discarded, never executed.
+- Browser mutations are never retried. Each one is logged before it happens and marked executed,
+  not executed or uncertain.
+- Page text and URLs are treated as untrusted evidence, never as instructions.
 
-## Why it moves
+More detail in [docs/design.md](docs/design.md).
 
-- **One request per decision cycle.** Operation and target heads share the same observed state.
-- **No screenshots in the default agent loop.** Jev consumes structured state. The inspector opts into screenshots; the video uses a separate continuous screencast.
-- **One browser call per snapshot.** Read visible controls, their names, values, and text atomically. Keep references to the actual DOM nodes.
-- **Validate the selected target.** Clicks check the document, form values, target, and nearby context. Animation alone does not force another prediction. Resolve current geometry and reject covered controls before input.
-- **Wait for useful state.** After typing into a combobox, wait for visible suggestions, capped at 200 ms. Other interactions get at most two animation frames or 50 ms. These reads happen after execution is logged.
-- **Keep hidden tabs rendering.** Focus emulation prevents background animation throttling without switching Chrome's visible tab.
-- **Send visible text.** Offscreen article bodies and footers do not fill the model context.
-- **Reuse an interrupted text request.** A generated value survives a stale-page retry only if the entire text-helper input is unchanged.
+## Project layout
 
-Every executed target is resolved from an observed node. The executor rechecks page freshness and click occlusion. Model output never becomes selectors, coordinates, shell commands, or executable JavaScript. Text-helper output must parse as a small JSON object before typing.
-
-## Small enough to read
-
-| File | Job |
+| Path | What it is |
 | --- | --- |
-| [agent.py](jev_ultrafast/agent.py) | The complete loop and text-helper handoff |
-| [snapshot.js](jev_ultrafast/snapshot.js) | Atomic DOM snapshot, indexed controls, freshness guards |
-| [browser.py](jev_ultrafast/browser.py) | Browser connection, current geometry, execution |
-| [model.py](jev_ultrafast/model.py) | Dynamic operation/target heads and text generation |
-| [questions.py](jev_ultrafast/questions.py) | Model instructions |
-| [demo.py](jev_ultrafast/demo.py) | Local inspector |
-
-## Evidence and limits
-
-The current video is a **7,073 ms** Google Flights run. Timing starts after initial page observation and includes model calls, generated text, browser work, stale decisions, and loading waits. A fresh independent check verifies the one-way setting, Zürich, London, September 20, 2026, and visible flight options. The video plays at 1×, with no opening hold and a 0.5-second final hold.
-
-In six alternating runs with identical models and settings, both versions passed **3/3**. Median task time went from **9.450 s → 7.092 s**, a **25% reduction**; median browser protocol calls went from **1,092 → 101**. This is three repeats of one task on one browser profile, not a general reliability benchmark.
-
-The same policy opened the requested Wikipedia article in **2.798 s** and passed a local hotel search/filter task in **1.896 s**. Runs, failures, source hashes, and measurement boundaries are in [performance.md](docs/performance.md).
-
-A `DONE` choice still requires independent outcome verification. The DOM reader handles common HTML and ARIA controls, not the full accessible-name specification. Shadow roots, frames, canvas, uploads, pop-up tabs, nested scrolling, and arbitrary keyboard widgets remain outside this MVP. Owned tabs share the existing Chrome profile.
+| `jev_ultrafast/agent.py`, `model.py`, `browser.py`, `snapshot.js` | The decision loop, model client, browser control and DOM reader. |
+| `jev_ultrafast/chat.py`, `assistant.py` | Chat session, safety and verification helpers. |
+| `jev_ultrafast/manual.py`, `privacy.js` | Manual control and secret scrubbing. |
+| `jev_ultrafast/preview.py`, `timing.py` | Live preview capture and timing evidence. |
+| `jev_ultrafast/conversations.py`, `secrets_store.py` | Local history and encrypted key storage. |
+| `jev_ultrafast/demo.py` | The local HTTP server (`jev` command). |
+| `frontend/` | React + Vite UI. Builds into `jev_ultrafast/web/`. |
 
 ## Development
 
 ```bash
+cd frontend && npm ci && npm run build && npm run lint && cd ..
 uv run ruff check .
 uv run pytest
-node --check jev_ultrafast/static/app.js
 node --check jev_ultrafast/snapshot.js
+node --check jev_ultrafast/static/app.js
+node --check jev_ultrafast/static/manual.js
+node --check jev_ultrafast/privacy.js
 uv build
 ```
 
-Tests are offline. `uv run python scripts/check_guards.py` checks real controls in a local browser without model calls. Live examples and recording scripts make paid API calls. `scripts/record_flights.py <new-folder>` captures original browser timestamps; `scripts/render_demo.py <recording-folder>` renders that verified run at 1× and crops out the Google account strip. Credentials and raw traces stay ignored.
+Rebuild the frontend after any UI change; the server serves `/` and `/settings` from
+`jev_ultrafast/web/`. Tests are offline and never call paid APIs. `scripts/check_guards.py` and
+`scripts/check_manual.py` exercise real controls in a local browser with mocked models.
 
----
+## Limits
 
-[Browser Use](https://github.com/browser-use/browser-use) · [Browser Harness](https://github.com/browser-use/browser-harness) · [TypeSafe speculative fan-out](https://docs.typesafe.ai/patterns/fan-out)
+The DOM reader handles common HTML and ARIA controls, not the full accessible-name specification.
+Shadow roots, frames, canvas, uploads, pop-up tabs and nested scrolling are outside automatic
+mode; manual control can operate frames, canvas and keyboard widgets. Owned tabs share the existing
+Chrome profile. Timing and benchmark numbers are in [docs/performance.md](docs/performance.md) and
+[docs/chat-performance.md](docs/chat-performance.md); they come from a few runs of specific tasks
+and are not a general reliability benchmark.
+
+## License
+
+[MIT](LICENSE) © 2026 Samuel Yossef / Soares.
