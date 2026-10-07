@@ -121,6 +121,20 @@ def main():
         assert browser.evaluate("document.querySelector('#category').value") == "Design"
         passed.append("native dropdown selects an observed option")
 
+        # An unlabeled dropdown must not be named after all of its options (huge decision requests).
+        browser.evaluate(
+            "document.body.insertAdjacentHTML('beforeend',"
+            "'<select id=unlabeled><option>Alpha</option><option>Beta</option></select>')"
+        )
+        labels = [
+            a["label"]
+            for a in browser.observe(screenshot=False)["actions"]
+            if a["kind"] == "select" and a.get("current_value") == "Alpha"
+        ]
+        browser.evaluate("document.querySelector('#unlabeled').remove()")
+        assert labels and all("Alpha Beta" not in label for label in labels), labels
+        passed.append("unlabeled dropdown is not named after all of its options")
+
         browser.evaluate(
             "document.querySelector('#query').addEventListener('input',()=>setTimeout(()=>{"
             "document.querySelector('#suggestions').innerHTML='<div role=option>Generated</div>'"
