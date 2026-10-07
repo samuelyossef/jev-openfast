@@ -177,4 +177,7 @@ Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 
 ## License
 
-[MIT](LICENSE) © 2026 Samuel Yossef / Copyxyz.
+[MIT](LICENSE) © 2026 Browser Use and © 2026 Samuel Yossef / Copyxyz.
+
+This project builds on the original Jev Ultrafast by Browser Use (MIT). Their copyright notice is kept as
+the license requires.
