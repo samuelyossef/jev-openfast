@@ -151,4 +151,4 @@ and are not a general reliability benchmark.
 
 ## License
 
-[MIT](LICENSE) © 2026 Samuel Yossef / Soares.
+[MIT](LICENSE) © 2026 Samuel Yossef / Copyxyz.
