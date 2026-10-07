@@ -50,7 +50,7 @@ OpenRouter inference key, not a Management key.
 pwsh -File scripts/start_windows.ps1
 ```
 
-**macOS / Linux:** connect [Browser Harness](https://github.com/browser-use/browser-harness) to
+**macOS / Linux:** connect Browser Harness to
 Chrome (`uv run browser-harness --doctor`, allow remote debugging when prompted), then:
 
 ```bash

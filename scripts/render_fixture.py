@@ -24,7 +24,7 @@ for index in range(round((end_ms + 2000) * 30 / 1000)):
     canvas = Image.new("RGB", (1240, 960), "#f5f5ed")
     canvas.paste(frame, (60, 105))
     draw = ImageDraw.Draw(canvas)
-    draw.text((60, 34), "BROWSER USE × TYPESAFE", font=font, fill="#283c2c")
+    draw.text((60, 34), "JEV OPENFAST × TYPESAFE", font=font, fill="#283c2c")
     draw.text((945, 38), f"{t / 1000:0.2f}s / 1×", font=small, fill="#487645")
     step = sum(h["elapsed_ms"] <= t for h in state["history"])
     draw.text((60, 909), f"JEV OpenFast Browser   {step}/5 browser actions   Live API calls",
