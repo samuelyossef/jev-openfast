@@ -9,7 +9,7 @@ article and tell me when it was published"); JEV opens a real Chrome tab, picks 
 elements it actually sees, checks the result before reporting success, and hands the page to you when it needs
 a login, a CAPTCHA or a code.
 
-![JEV OpenFast Browser: chat on the left, live browser preview on the right](docs/screenshot.png)
+![JEV OpenFast Browser: a local AI browser agent you talk to in chat](docs/social-preview.png)
 
 The model never writes selectors or code. Each page becomes a numbered table of elements; the model returns an
 operation (`CLICK`, `TYPE_TEXT`, `SELECT`, `PRESS_ENTER`, `SCROLL_UP`, `SCROLL_DOWN`, `WAIT`, `DONE`, `BLOCKED`)
