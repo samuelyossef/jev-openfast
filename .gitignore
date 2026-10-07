@@ -9,3 +9,6 @@ artifacts/
 
 dist/
 frontend/node_modules/
+
+.playwright-cli/
+.playwright-mcp/
