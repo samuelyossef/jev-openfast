@@ -34,21 +34,36 @@ def openrouter_key_status():
     return {"openrouter_key_configured": source != "missing", "openrouter_key_source": source}
 
 
+RETRY_STATUS = {429, 502, 503, 529}
+ATTEMPTS = 5  # waits about 1+2+4+8 s; model requests never touch the browser, so retrying them is safe
+
+
+def retry_delay(response, attempt):
+    """Honor the provider's Retry-After (seconds), bounded so a stuck limit cannot hang a task."""
+    try:
+        return min(10.0, max(0.5, float(response.headers.get("retry-after", ""))))
+    except ValueError:
+        return 2.0**attempt
+
+
 def post_json(url, key, body, *, on_attempt=None):
-    for attempt in range(3):
+    for attempt in range(ATTEMPTS):
         if on_attempt:
             on_attempt()
         try:
             response = CLIENT.post(url, json=body, headers={"Authorization": f"Bearer {key}"})
         except httpx.HTTPError:
-            raise RuntimeError("Model connection failed; no action executed.") from None
-        if response.status_code in {429, 529, 503} and attempt < 2:
-            time.sleep(0.5 * 2**attempt)
+            raise RuntimeError("Falha de conexão com o provedor do modelo; nenhuma ação foi executada") from None
+        if response.status_code in RETRY_STATUS and attempt < ATTEMPTS - 1:
+            time.sleep(retry_delay(response, attempt))
             continue
+        if response.status_code == 429:
+            raise RuntimeError("o provedor do modelo está limitando as requisições (HTTP 429). "
+                               "Aguarde alguns segundos e envie de novo; nenhuma ação foi executada")
         if response.is_error:
-            raise RuntimeError(f"Model provider returned HTTP {response.status_code}; no action executed.")
+            raise RuntimeError(f"o provedor do modelo retornou HTTP {response.status_code}; "
+                               "nenhuma ação foi executada")
         return response.json()
-    raise RuntimeError("Model unavailable")
 
 
 def validate_choice(answer, ids):

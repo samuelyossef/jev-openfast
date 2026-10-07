@@ -628,3 +628,30 @@ def test_unrelated_browser_errors_are_not_retried(monkeypatch):
     with pytest.raises(RuntimeError, match="daemon"):
         b.observe(screenshot=False)
     assert cdp.call_count == 1
+
+
+class _Response:
+    def __init__(self, status, headers=None, data=None):
+        self.status_code, self.headers, self._data = status, headers or {}, data or {}
+        self.is_error = status >= 400
+
+    def json(self):
+        return self._data
+
+
+def test_rate_limit_is_retried_with_retry_after_then_succeeds(monkeypatch):
+    replies = [_Response(429, {"retry-after": "3"}), _Response(503), _Response(200, data={"ok": True})]
+    monkeypatch.setattr(model.CLIENT, "post", Mock(side_effect=replies))
+    sleeps = []
+    monkeypatch.setattr(model.time, "sleep", sleeps.append)
+    assert model.post_json("https://x", "k", {}) == {"ok": True}
+    assert sleeps == [3.0, 2.0]
+
+
+def test_persistent_rate_limit_explains_itself_without_hanging(monkeypatch):
+    monkeypatch.setattr(model.CLIENT, "post", Mock(return_value=_Response(429, {"retry-after": "600"})))
+    sleeps = []
+    monkeypatch.setattr(model.time, "sleep", sleeps.append)
+    with pytest.raises(RuntimeError, match="HTTP 429.*nenhuma ação foi executada"):
+        model.post_json("https://x", "k", {})
+    assert len(sleeps) == model.ATTEMPTS - 1 and max(sleeps) == 10.0

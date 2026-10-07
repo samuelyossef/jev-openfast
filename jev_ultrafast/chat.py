@@ -298,7 +298,8 @@ class ChatSession:
             self.turn_finished = time.perf_counter()
             self.progress = "A tarefa parou e precisa de atenção."
             self._reply(
-                f"A tarefa parou: {error}. As ações já executadas não serão repetidas automaticamente.",
+                f"A tarefa parou: {str(error).rstrip('.')}. "
+                "As ações já executadas não serão repetidas automaticamente.",
                 kind="error",
                 verification={"satisfied": False, "evidence": []},
             )
