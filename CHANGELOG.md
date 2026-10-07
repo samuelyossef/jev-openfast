@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Docs: rewritten README (quick start, usage, configuration, troubleshooting, scripts, credits) with a
+  screenshot; design notes now cover the chat, handoff, manual control and preview layers.
+- UI: the "page changed" verification badge and the default conversation title follow the interface language.
+
 ## 0.1.0
 
 First public release.

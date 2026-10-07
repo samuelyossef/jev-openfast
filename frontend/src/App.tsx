@@ -184,7 +184,7 @@ function MessageCard({ message, progress, onRecheck, rechecking, actions }: { me
       {actions}
     </div> : <div className="msg-text">{message.content || <span className="msg-pending">{t('stateThinking')}… {progress && <span className="msg-progress" role="status">{progress}</span>}</span>}</div>}
     {message.verification && <div className={`verification ${message.verification.satisfied ? 'verified' : 'unverified'}`}>
-      {message.verification.stale ? 'Página alterada — verificação desatualizada' : message.verification.satisfied ? t('confirmed') : t('unconfirmed')}
+      {message.verification.stale ? t('staleVerification') : message.verification.satisfied ? t('confirmed') : t('unconfirmed')}
     </div>}
     {message.verification?.evidence?.length ? <details className="evidence"><summary>{t('evidence')}</summary><p>{message.verification.evidence.join('\n')}</p></details> : null}
     {!!message.verification?.checks?.length && <details className="verification-checks" open={!message.verification.satisfied}>
@@ -575,8 +575,8 @@ function App() {
 
   async function renameChat(item: Conversation) {
     if (disabledSession) return;
-    const title = window.prompt(t('conversationName'), item.title);
-    if (title == null || title.trim() === item.title) return;
+    const title = window.prompt(t('conversationName'), displayTitle(item.title));
+    if (title == null || title.trim() === displayTitle(item.title)) return;
     await perform('rename', { conversation_id: item.id, title });
   }
 
@@ -604,14 +604,16 @@ function App() {
   const disabled = disabledSession || state?.chat_status === 'awaiting_confirmation';
   const pausing = pauseSubmitting || Boolean(state?.pause_requested);
   const activeConversations = conversations.filter((item) => !item.archived);
-  const filtered = conversations.filter((item) => item.archived === showArchived && item.title.toLocaleLowerCase(locale).includes(search.toLocaleLowerCase(locale)));
-  const currentTitle = conversations.find((item) => item.id === state?.session_id)?.title || t('newChat');
+  // The store keeps a Portuguese placeholder for untitled chats; show it in the interface language.
+  const displayTitle = (title: string) => (title === 'Nova conversa' ? t('newChat') : title);
+  const filtered = conversations.filter((item) => item.archived === showArchived && displayTitle(item.title).toLocaleLowerCase(locale).includes(search.toLocaleLowerCase(locale)));
+  const currentTitle = displayTitle(conversations.find((item) => item.id === state?.session_id)?.title || t('newChat'));
   const maxPreviewWidth = Math.max(300, viewportWidth - (sidebarOpen ? 256 : 56) - 320 - (detailsOpen && viewportWidth >= 1132 ? 256 : 0));
   const effectivePreviewWidth = Math.min(maxPreviewWidth, Math.max(300, previewWidth));
   const resizePreview = (width: number) => setPreviewWidth(Math.min(maxPreviewWidth, Math.max(300, width)));
 
   function conversationActions(item: Conversation) {
-    return <details className="conversation-actions"><summary className="icon-btn" aria-label={t('actionsFor', { title: item.title })}><Icon name="more" /></summary><div className="conversation-menu">
+    return <details className="conversation-actions"><summary className="icon-btn" aria-label={t('actionsFor', { title: displayTitle(item.title) })}><Icon name="more" /></summary><div className="conversation-menu">
       <button type="button" disabled={disabledSession} onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void selectChat(item.id); }}>{t('openConversation')}</button>
       <button type="button" disabled={disabledSession} onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void renameChat(item); }}>{t('rename')}</button>
       <button type="button" disabled={disabledSession} onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void (item.archived ? unarchiveChat(item) : archiveChat(item)); }}>{item.archived ? t('restoreConversation') : t('archiveConversation')}</button>
@@ -630,7 +632,7 @@ function App() {
       </div>
       <div className="sb-list"><div className="sb-section">{t('recents')} <span className="count">{activeConversations.length}</span></div>
         {activeConversations.slice(0, 30).map((item) => <div className="sidebar-conversation" key={item.id}><button className={`convo ${item.id === state?.session_id ? 'active' : ''}`} onClick={() => selectChat(item.id)} disabled={disabledSession} title={item.title}>
-          <span className="convo-title">{item.title}</span></button>{conversationActions(item)}</div>)}
+          <span className="convo-title">{displayTitle(item.title)}</span></button>{conversationActions(item)}</div>)}
       </div>
       <div className="sb-foot" ref={accountMenu}>
         <button className="account-trigger" type="button" aria-haspopup="menu" aria-expanded={accountMenuOpen} aria-label={t('localMenu')}
@@ -672,7 +674,7 @@ function App() {
         {historyOpen ? <div className="history-view"><div className="history-heading"><h1>{t('history')}</h1><button onClick={() => setHistoryOpen(false)}>{t('backToChat')}</button></div>
           <label className="search-field"><Icon name="search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchConversations')} aria-label={t('searchConversations')} autoFocus /></label>
           <div className="history-tabs" role="tablist"><button type="button" role="tab" aria-selected={!showArchived} className={!showArchived ? 'active' : ''} onClick={() => setShowArchived(false)}>{t('conversations')} <span>{activeConversations.length}</span></button><button type="button" role="tab" aria-selected={showArchived} className={showArchived ? 'active' : ''} onClick={() => setShowArchived(true)}>{t('archived')} <span>{conversations.length - activeConversations.length}</span></button></div>
-          <div className="history-list">{filtered.map((item) => <div key={item.id} className="history-item"><button className="history-item-open" onClick={() => selectChat(item.id)} disabled={disabledSession}><strong>{item.title}</strong><small>{new Date(item.updated_at).toLocaleString(locale)} {item.last_url ? `· ${item.last_url}` : ''}</small></button>
+          <div className="history-list">{filtered.map((item) => <div key={item.id} className="history-item"><button className="history-item-open" onClick={() => selectChat(item.id)} disabled={disabledSession}><strong>{displayTitle(item.title)}</strong><small>{new Date(item.updated_at).toLocaleString(locale)} {item.last_url ? `· ${item.last_url}` : ''}</small></button>
             {conversationActions(item)}</div>)}
             {!filtered.length && <p className="muted">{t('noConversations')}</p>}</div></div> : <>
           <div className="mobile-tabs"><button className={mobileView === 'chat' ? 'active' : ''} onClick={() => setMobileView('chat')}>{t('chat')}</button><button className={mobileView === 'preview' ? 'active' : ''} onClick={() => setMobileView('preview')}>{t('preview')}</button></div>

@@ -13,4 +13,5 @@ Read README.md before editing. Keep the loop small: page -> indexed elements -> 
 - Keep examples, README claims, raw evidence, and model-call counts consistent.
 - Do not commit or push unless the user requests it.
 
-Checks: uv run ruff check ., uv run pytest, node --check jev_ultrafast/static/app.js, uv build.
+Checks: uv run ruff check ., uv run pytest, node --check jev_ultrafast/snapshot.js static/app.js static/manual.js privacy.js,
+uv build, and in frontend/: npm run lint, npm run build (commit the rebuilt jev_ultrafast/web/). See CONTRIBUTING.md.

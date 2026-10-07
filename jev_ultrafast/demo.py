@@ -1,4 +1,4 @@
-"""Loopback-only chat and inspector for the Jev browser agent."""
+"""Loopback-only HTTP server and chat UI for the JEV OpenFast Browser agent."""
 
 import atexit
 import json
