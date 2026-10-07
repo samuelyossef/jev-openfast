@@ -10,7 +10,7 @@ Zurich → London on Google Flights in 7.1 seconds. real time.
 
 still waiting for Google to load haha
 
-https://github.com/browser-use/jev-ultrafast
+https://github.com/samuelyossef/jev-openfast-browser
 
 ---
 

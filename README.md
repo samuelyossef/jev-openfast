@@ -35,8 +35,8 @@ A small text model writes words only when the operation is `TYPE_TEXT`.
 Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Google Chrome, Node.js (only to rebuild the UI).
 
 ```bash
-git clone https://github.com/browser-use/jev-ultrafast.git
-cd jev-ultrafast
+git clone https://github.com/samuelyossef/jev-openfast-browser.git
+cd jev-openfast-browser
 uv sync
 cp .env.example .env
 ```
