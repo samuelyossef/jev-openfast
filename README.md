@@ -1,4 +1,4 @@
-# Jev Ultrafast
+# JEV OpenFast Browser
 
 A local browser assistant. You describe a task in chat; Jev opens a real Chrome tab, picks each
 next action from the elements it actually sees, and checks the result before reporting success.

@@ -597,7 +597,7 @@ function App() {
   return <div className="app jev-app" data-sidebar={sidebarOpen ? 'open' : 'closed'} data-details={detailsOpen && !historyOpen ? 'open' : 'closed'} data-mobile-view={mobileView} data-page={settingsPage ? 'settings' : 'chat'}
     style={{ '--preview-width': `${effectivePreviewWidth}px` } as CSSProperties}>
     <aside className={`sidebar ${sidebarOpen ? '' : 'is-collapsed'} ${accountMenuOpen ? 'menu-open' : ''}`} aria-label={t('localMenu')}>
-      <div className="sb-top"><span className="brand"><span className="brand-mark" aria-hidden="true" /><span className="brand-name" aria-hidden="true">Jev Ultrafast</span></span>
+      <div className="sb-top"><span className="brand"><span className="brand-mark" aria-hidden="true" /><span className="brand-name" aria-hidden="true">JEV OpenFast Browser</span></span>
         <button className="icon-btn sb-toggle" onClick={() => { setSidebarOpen((value) => !value); if (window.innerWidth <= 900) setDetailsOpen(false); }} aria-label={sidebarOpen ? 'Recolher menu' : 'Expandir menu'}><Icon name="panel" /></button></div>
       <div className="sb-actions">
         <button className="sb-act primary" aria-label={t('newChat')} title={t('newChat')} onClick={newChat} disabled={disabledSession}><Icon name="plus" /><span className="sb-label">{t('newChat')}</span></button>
@@ -642,7 +642,7 @@ function App() {
     </main> : <>
       <main className={`main ${historyOpen ? 'history-main' : 'chat-main'}`}>
         <div className="topbar"><button className="icon-btn topbar-menu" onClick={() => { setSidebarOpen(true); setDetailsOpen(false); }} aria-label={t('openMenu')}><Icon name="panel" /></button>
-          <span className="crumbs"><b>{historyOpen ? t('history') : currentTitle}</b></span><span className="top-right"><span className="top-pill"><span className="dot" /> Jev Ultrafast</span></span></div>
+          <span className="crumbs"><b>{historyOpen ? t('history') : currentTitle}</b></span><span className="top-right"><span className="top-pill"><span className="dot" /> JEV OpenFast Browser</span></span></div>
         {(error || state?.storage_error) && <div className="error-banner" role="alert">{error || state?.storage_error}</div>}
         {historyOpen ? <div className="history-view"><div className="history-heading"><h1>{t('history')}</h1><button onClick={() => setHistoryOpen(false)}>{t('backToChat')}</button></div>
           <label className="search-field"><Icon name="search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchConversations')} aria-label={t('searchConversations')} autoFocus /></label>

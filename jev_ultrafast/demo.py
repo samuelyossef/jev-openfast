@@ -289,7 +289,7 @@ def main():
     restore_selected()
     atexit.register(close_browser)
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"Jev Ultrafast: {ORIGIN}", flush=True)
+    print(f"JEV OpenFast Browser: {ORIGIN}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -1017,7 +1017,7 @@ def test_http_session_chat_restore_and_reject_raw_actions(local_server):
         == 400
     )
     assert client.post("/api/session", json=[]).status_code == 400
-    assert "Jev · Assistente" in client.get("/").text
+    assert "JEV OpenFast Browser · Assistente" in client.get("/").text
     fresh = client.post("/api/session", json={"url": "http://127.0.0.1:8080"}).json()
     assert fresh["session_id"] != session_id and fresh["messages"] == []
     assert FakeBrowser.instances[0].closed

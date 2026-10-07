@@ -1,4 +1,4 @@
-# Jev Ultrafast
+# JEV OpenFast Browser
 
 Read README.md before editing. Keep the loop small: page -> indexed elements -> operation + target -> execution.
 
