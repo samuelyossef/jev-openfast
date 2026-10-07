@@ -55,9 +55,14 @@ type Conversation = { id: string; title: string; updated_at: number; phase: stri
 const token = document.querySelector<HTMLMetaElement>('meta[name="demo-token"]')?.content || '';
 const activePhases = new Set(['thinking', 'running', 'verifying']);
 
+class HttpError extends Error {
+  status: number;
+  constructor(message: string, status: number) { super(message); this.status = status; }
+}
+
 async function readJson<T>(url: string, headers?:HeadersInit): Promise<T> {
   const response = await fetch(url, { cache: 'no-store', headers });
-  if (!response.ok) throw new Error(translate(currentLocale(), 'queryError'));
+  if (!response.ok) throw new HttpError(translate(currentLocale(), 'queryError'), response.status);
   return response.json();
 }
 
@@ -433,7 +438,15 @@ function App() {
             }
             setPreviewError(result.error || '');
           }
-        } catch { if (!cancelled && stateRef.current?.session_id === sessionId) setPreviewError(translate(currentLocale(), 'updatePreviewError')); }
+        } catch (cause) {
+          if (cause instanceof HttpError && cause.status === 404) {
+            // This tab still points at a conversation the server replaced (restart, another tab, or a new chat).
+            // Follow the server's current conversation instead of polling a dead preview.
+            try { await refresh(); } catch { /* the regular state poll reports connection errors */ }
+            if (!cancelled && stateRef.current?.session_id !== sessionId) return;
+          }
+          if (!cancelled && stateRef.current?.session_id === sessionId) setPreviewError(translate(currentLocale(), 'updatePreviewError'));
+        }
       }
       if (!cancelled) timer = window.setTimeout(pollPreview, stateRef.current?.manual?.status === 'active' ? 200 : 500);
     };
