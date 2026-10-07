@@ -1,5 +1,8 @@
 # JEV OpenFast Browser
 
+[![CI](https://github.com/samuelyossef/jev-openfast-browser/actions/workflows/ci.yml/badge.svg)](https://github.com/samuelyossef/jev-openfast-browser/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A local browser assistant. You describe a task in chat; Jev opens a real Chrome tab, picks each
 next action from the elements it actually sees, and checks the result before reporting success.
 
@@ -7,6 +10,10 @@ The model never writes selectors or code. Each page becomes a numbered table of 
 model returns an operation (`CLICK`, `TYPE_TEXT`, `SELECT`, `PRESS_ENTER`, `SCROLL_UP`,
 `SCROLL_DOWN`, `WAIT`, `DONE`, `BLOCKED`) and a target from that table, and the code executes it.
 A small text model writes words only when the operation is `TYPE_TEXT`.
+
+> **Status: beta.** It drives a real browser and calls paid model APIs (OpenRouter), so use a key with a
+> spending limit and watch what it does. Windows is the primary tested platform; macOS and Linux work
+> through Chrome remote debugging and are less tested.
 
 ## Features
 
@@ -28,11 +35,12 @@ A small text model writes words only when the operation is `TYPE_TEXT`.
   archive and delete. Stored locally in SQLite. After a restart, conversations come back as
   interrupted and nothing is replayed.
 - **Settings** (`/settings`): General (interface language, dark theme) and Model (OpenRouter API key).
-  The sidebar footer shows v0.0.1 with GitHub and LinkedIn links.
+  The sidebar footer shows v0.1.0 with GitHub and LinkedIn links.
 
 ## Run it
 
-Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Google Chrome, Node.js (only to rebuild the UI).
+Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Google Chrome, and an
+[OpenRouter](https://openrouter.ai/) API key. Node.js is only needed to rebuild the UI (the built UI is included).
 
 ```bash
 git clone https://github.com/samuelyossef/jev-openfast-browser.git
@@ -57,7 +65,19 @@ Chrome (enable remote debugging; `uv run jev --doctor` checks the setup), then:
 uv run --env-file .env jev
 ```
 
-Open **http://127.0.0.1:8766**. Change the port with `TYPESAFE_DEMO_PORT`.
+Open **http://127.0.0.1:8766** (use exactly this address; `localhost` is rejected). Change the port
+with `TYPESAFE_DEMO_PORT`. Run `uv run jev --doctor` to check Python, the key, the port and Chrome.
+
+### Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| `OPENROUTER_API_KEY is required` | Add the key to `.env` or paste it in **Settings → Model**. |
+| HTTP 401 from the provider | The key is wrong or revoked; use a standard inference key. |
+| HTTP 429 | The provider is rate limiting; Jev retries, then asks you to resend. |
+| Chrome debugging unreachable | Windows: start with `scripts/start_windows.ps1`. Others: enable remote debugging at `chrome://inspect/#remote-debugging`, then `uv run jev --doctor`. |
+| Port 8766 already in use | Another Jev is running, or set `TYPESAFE_DEMO_PORT`. |
+| 403 in the browser console | The page is from an older server run or another address. Reload `http://127.0.0.1:8766`. |
 
 ### Configuration
 
@@ -148,6 +168,12 @@ mode; manual control can operate frames, canvas and keyboard widgets. Owned tabs
 Chrome profile. Timing and benchmark numbers are in [docs/performance.md](docs/performance.md) and
 [docs/chat-performance.md](docs/chat-performance.md); they come from a few runs of specific tasks
 and are not a general reliability benchmark.
+
+## Contributing and security
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md). Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
