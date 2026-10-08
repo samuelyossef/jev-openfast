@@ -241,12 +241,13 @@ Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 
 [![Contributors](https://contrib.rocks/image?repo=samuelyossef/jev-openfast-browser)](https://github.com/samuelyossef/jev-openfast-browser/graphs/contributors)
 
-Want to appear here? See [CONTRIBUTING.md](CONTRIBUTING.md).
+The full list, including the projects this app depends on (Browser Harness, OpenRouter, httpx, React, Vite), is in
+[CONTRIBUTORS.md](CONTRIBUTORS.md). Want to appear here? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credits and license
 
 [MIT](LICENSE) © 2026 Browser Use and © 2026 Samuel Yossef / Copyxyz.
 
 This project builds on the original Jev Ultrafast by Browser Use (MIT); their copyright notice is kept as the
-license requires. It runs on [Browser Harness](https://pypi.org/project/browser-harness/) for Chrome control and
+license requires. It runs on [Browser Harness](https://github.com/browser-use/browser-harness) for Chrome control and
 uses [OpenRouter](https://openrouter.ai/) and TypeSafe models.
