@@ -742,6 +742,42 @@ class ChatSession:
         return current["url"] == observed["url"] and all(
             assistant.shown(quote, sources) for quote in verdict["evidence"])
 
+    def navigate_user(self, body):
+        """The preview's address bar and Back/Forward/Reload, between tasks. The user is the one acting."""
+        self._check_idle()
+        action = body.get("action")
+        if action not in {"url", "back", "forward", "reload"}:
+            raise ValueError("Navegação desconhecida.")
+        url = validate_url(body.get("url")) if action == "url" else None
+        if self.agent is None and action != "url":
+            raise ValueError("Nenhuma página aberta para navegar.")
+        entry = {"turn_id": self.turn_id, "url": url or action, "status": "requested", "source": "user"}
+        self.navigation.append(entry)  # recorded before the browser is touched, never replayed
+        self.progress = "Abrindo a página…"
+        self._publish()
+        self._launch(self._navigate_user, action, url, entry)
+
+    def _navigate_user(self, action, url, entry):
+        try:
+            if self.agent is None:
+                self.agent = Agent(url, None, screenshots=False, viewport=self.viewport)
+                self._attach_timings()
+            else:
+                browser = self.agent.browser
+                {"url": lambda: browser.navigate(url), "reload": browser.reload,
+                 "back": lambda: browser.history_step(-1), "forward": lambda: browser.history_step(1)}[action]()
+                self.agent.state["page"] = browser.observe(screenshot=False)
+        except ValueError as error:  # nothing to go back/forward to: the page did not change
+            entry["status"] = "not_executed"
+            self.progress = str(error)
+        except Exception:
+            entry["status"] = "uncertain"
+            raise
+        else:
+            entry["status"] = "opened"
+            self.progress = "Página aberta. Envie uma tarefa ou uma pergunta."
+        self._publish()
+
     def recheck(self):
         self._check_idle()
         if not self.snapshot()["can_recheck"]:

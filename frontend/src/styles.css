@@ -622,6 +622,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .preview-head { height: var(--topbar-h); min-height: var(--topbar-h); border-bottom: 1px solid var(--border); padding: 0 12px; display: flex; align-items: center; gap: 8px; }
 .preview-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: 0 0 auto; }
 .preview-url { min-width: 0; font: 11px var(--font-mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.address-bar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; }
+.address-bar .preview-url { flex: 1; height: 26px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; }
+.address-bar .preview-url:hover:not(:disabled) { border-color: var(--border); }
+.address-bar .preview-url:focus { outline: none; border-color: var(--border-strong); background: var(--surface); color: var(--ink); }
+.preview-head .nav-btn { flex: 0 0 auto; width: 26px; height: 26px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 14px; line-height: 1; }
+.preview-head .nav-btn:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.preview-head .nav-btn:disabled { opacity: .4; }
 .preview-label { flex-shrink: 0; margin-left: auto; font: 10px var(--font-mono); color: var(--muted-2); }
 .preview-head .details-toggle { flex: 0 0 auto; border: 0; padding: 0; background: transparent; }
 .preview-head .details-toggle:hover { background: var(--hover); }

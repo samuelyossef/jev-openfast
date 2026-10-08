@@ -8,6 +8,7 @@ from .model import action_space
 
 # A capture is read-only, so a transient timeout (page still loading, busy daemon) is retried before it is shown.
 CAPTURE_ATTEMPTS = 3
+MANUAL_INTERVAL = 0.05  # under manual control the frame follows the user's input closely
 
 
 class Preview:
@@ -36,7 +37,9 @@ class Preview:
 
     def end_manual(self):
         with self.lock:
-            self.manual = self.manual_browser = None
+            browser, self.manual, self.manual_browser = self.manual_browser, None, None
+        if hasattr(browser, "stop_screencast"):
+            browser.stop_screencast()
         self.invalidate()
         self.wake.set()
 
@@ -76,10 +79,12 @@ class Preview:
 
     def _run(self):
         last_started = 0
+        shown = None  # screencast frame number currently cached
         while not self.closed.is_set():
-            self.wake.wait(timeout=0.2 if self.manual else None)
+            self.wake.wait(timeout=MANUAL_INTERVAL if self.manual else None)
             self.wake.clear()
-            if self.closed.wait(max(0, (0.2 if self.manual else 0.5) - (time.monotonic() - last_started))):
+            interval = MANUAL_INTERVAL if self.manual else 0.5
+            if self.closed.wait(max(0, interval - (time.monotonic() - last_started))):
                 return
             with self.lock:
                 pending, self.pending = self.pending, None
@@ -91,8 +96,13 @@ class Preview:
                 last_started = time.monotonic()
                 try:
                     before = manual_browser.manual_context()
-                    screenshot = manual_browser.capture()
-                    after = manual_browser.manual_context()
+                    if hasattr(manual_browser, "screencast"):
+                        screenshot, number = manual_browser.screencast()
+                        if number == shown and self.cached is not None:
+                            continue  # the page did not repaint
+                    else:
+                        screenshot, number = manual_browser.capture(), None
+                    after = manual_browser.manual_context(follow=False)
                     if not screenshot or any(before[k] != after[k] for k in ("document", "w", "h")):
                         continue
                     with manual.lock:
@@ -101,6 +111,7 @@ class Preview:
                                 continue
                             context = manual.frame(after)
                             self.revision += 1
+                            shown = number
                             self.cached = {"revision": self.revision, "captured_at": time.time(), "manual": True,
                                            "context": context,
                                            "page": {**after, "actions": [], "screenshot": screenshot}, "elements": []}

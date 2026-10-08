@@ -1,5 +1,7 @@
 """Local-browser freshness/execution regressions. No model calls or external websites."""
 
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote
 
 from jev_ultrafast.browser import Browser, StalePage
@@ -12,6 +14,43 @@ HTML = """<!doctype html><title>Guard checks</title>
 <label><input id="toggle" type="checkbox">Refundable</label>
 <select aria-label="Category"><option>All</option><option>Design</option></select>
 <p id="outside">Unrelated offscreen text</p>"""
+
+
+TABS = {"/": "<title>Opener</title><a href='/next' target='_blank'>New tab</a>"
+             "<button onclick=\"window.open('/popup','p','width=400,height=400')\">Sign in</button>",
+        "/next": "<title>Next tab</title>",
+        "/popup": "<title>Pop-up</title><button onclick='window.close()'>Done</button>"}
+
+
+def check_tabs(passed):
+    """Pop-ups need real http documents: Chrome blocks opening data: URLs in a new tab."""
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(TABS.get(self.path, "").encode())
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    for label, opened in (("New tab", "Next tab"), ("Sign in", "Pop-up")):
+        browser = Browser(f"http://127.0.0.1:{server.server_port}/")
+        try:
+            page = browser.observe(screenshot=False)
+            browser.act(next(a for a in page["actions"] if a["label"] == label), page)
+            page = browser.observe(screenshot=False)
+            assert page["title"] == opened and browser.tabs() == 2, (page["title"], browser.tabs())
+            if label == "Sign in":
+                browser.act(next(a for a in page["actions"] if a["label"] == "Done"), page)
+                page = browser.observe(screenshot=False)
+                assert page["title"] == "Opener" and browser.tabs() == 1, page["title"]
+        finally:
+            browser.close()
+    server.shutdown()
+    passed.append("a target=_blank link and a pop-up are followed; a closed pop-up returns to its opener")
 
 
 def main():
@@ -171,8 +210,25 @@ def main():
         result = browser.observe(screenshot=False)
         assert "Result for books" in result["text"]
         passed.append("Enter submits a buttonless search and its result is observed")
+
+        browser.navigate("data:text/html," + quote("<title>Second</title>"))
+        browser.history_step(-1)
+        assert browser.observe(screenshot=False)["title"] == "Search form"
+        browser.history_step(1)
+        origin = browser.evaluate("performance.timeOrigin")
+        assert browser.observe(screenshot=False)["title"] == "Second"
+        browser.reload()
+        assert browser.evaluate("performance.timeOrigin") != origin
+        try:
+            browser.history_step(1)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Forward past the newest page must not navigate")
+        passed.append("Back, Forward and Reload wait for the resulting document")
     finally:
         browser.close()
+    check_tabs(passed)
     print("\n".join(passed))
     print(f"PASS: {len(passed)} browser guard checks; no model calls")
 

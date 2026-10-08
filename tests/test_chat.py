@@ -63,6 +63,15 @@ class FakeBrowser:
             self.mutations.append(("navigate", url))
         self.page.update(url=url, text="Pronta", fingerprint=f"opened-{url}")
 
+    def reload(self):
+        self.mutations.append(("reload", None))
+
+    def history_step(self, step):
+        if step < 0 and not any(kind == "navigate" for kind, _ in self.mutations):
+            raise ValueError("Não há página para voltar.")
+        self.mutations.append(("history", step))
+        self.page.update(fingerprint=f"history-{len(self.mutations)}")
+
     def act(self, action, page, text=None):
         if self.stale_before_action:
             self.stale_before_action = False
@@ -1198,3 +1207,36 @@ def test_history_rename_archive_restore_and_validation(local_server):
     assert restored["session_id"] == conversation_id
     assert len(restored["messages"]) == 2 and restored["page"] is None
     assert len(FakeBrowser.instances) == 1
+
+
+def test_address_bar_navigation_is_recorded_once_and_observed(offline):
+    session = chat.ChatSession()
+    with pytest.raises(ValueError, match="Nenhuma página"):
+        session.navigate_user({"action": "back"})
+    for bad in ({"action": "url", "url": "javascript:alert(1)"}, {"action": "jump"}):
+        with pytest.raises(ValueError):
+            session.navigate_user(bad)
+    assert not session.navigation and not FakeBrowser.instances
+
+    session.navigate_user({"action": "url", "url": "https://example.org"})  # no tab yet: open one there
+    session.worker.join(3)
+    browser = session.agent.browser
+    assert session.agent.state["page"]["url"] == "https://example.org"
+
+    session.navigate_user({"action": "back"})  # nothing to go back to: reported, nothing executed
+    session.worker.join(3)
+    assert session.navigation[-1]["status"] == "not_executed" and "voltar" in session.progress
+
+    session.navigate_user({"action": "url", "url": "https://example.com/a"})
+    session.worker.join(3)
+    observed = browser.observations
+    session.navigate_user({"action": "back"})
+    session.worker.join(3)
+    session.navigate_user({"action": "reload"})
+    session.worker.join(3)
+    assert browser.mutations == [("navigate", "https://example.com/a"), ("history", -1), ("reload", None)]
+    assert browser.observations == observed + 2  # each navigation is observed once, after it ran
+    assert [(item["url"], item["status"], item["source"]) for item in session.navigation] == [
+        ("https://example.org", "opened", "user"), ("back", "not_executed", "user"),
+        ("https://example.com/a", "opened", "user"), ("back", "opened", "user"), ("reload", "opened", "user")]
+    assert session.phase != "error"

@@ -419,8 +419,10 @@ def test_optional_post_input_wait_timeout_still_observes(monkeypatch):
     instance.session = "test"
     instance.after_input = {"kind": "click", "node": 1}
     instance.call = Mock(side_effect=TimeoutError("wait timed out"))
+    instance.follow_tabs = Mock(return_value=False)
     monkeypatch.setattr(browser, "browser_operation", Mock(return_value=page()))
     assert instance.observe(screenshot=False)["title"] == "Search"
+    instance.follow_tabs.assert_called_once_with()
 
 
 def test_recording_skips_missing_optional_frame(runner, tmp_path):
@@ -445,6 +447,70 @@ def test_scroll_coordinates_stay_inside_current_viewport(monkeypatch, size):
     assert 0 <= event["x"] < size[0] and 0 <= event["y"] < size[1]
 
 
+def test_follow_tabs_switches_to_owned_popups_and_returns_when_they_close(monkeypatch):
+    import jev_ultrafast.browser as browser
+
+    pages = [{"targetId": "owned", "type": "page"}, {"targetId": "users-tab", "type": "page"},
+             {"targetId": "frame", "type": "iframe", "openerId": "owned"}]
+    calls = []
+
+    def cdp(method, **params):
+        calls.append((method, params))
+        if method == "Target.getTargets":
+            return {"targetInfos": [dict(page) for page in pages]}
+        if method == "Target.attachToTarget":
+            return {"sessionId": f"session-{params['targetId']}"}
+        return {}
+
+    monkeypatch.setattr(browser, "cdp", cdp)
+    instance = browser.Browser.__new__(browser.Browser)
+    instance.target, instance.session, instance.openers, instance.viewport = "owned", "session-owned", [], (800, 600)
+    assert not instance.follow_tabs()  # an unrelated tab or a frame is never followed
+
+    pages.append({"targetId": "popup", "type": "page", "openerId": "owned"})
+    assert instance.follow_tabs() and (instance.target, instance.session) == ("popup", "session-popup")
+    assert instance.tabs() == 2
+    setup = [method for method, params in calls if params.get("session_id") == "session-popup"]
+    assert setup[:2] == ["Emulation.setDeviceMetricsOverride", "Page.enable"]
+    assert "Page.addScriptToEvaluateOnNewDocument" in setup  # the privacy script reaches the new tab
+    assert not instance.follow_tabs()  # already followed
+
+    pages.pop()  # the sign-in pop-up closed itself
+    assert instance.follow_tabs() and (instance.target, instance.session) == ("owned", "session-owned")
+
+    pages.append({"targetId": "second", "type": "page", "openerId": "owned"})
+    instance.follow_tabs()
+    calls.clear()
+    instance.close()
+    assert [params["targetId"] for method, params in calls if method == "Target.closeTarget"] == ["second", "owned"]
+
+
+def test_new_tab_link_opens_an_owned_tab_without_a_held_click(monkeypatch):
+    import jev_ultrafast.browser as browser
+
+    calls = []
+
+    def cdp(method, **params):
+        calls.append(method)
+        if method == "Runtime.evaluate":
+            return {"result": {"value": {"x": 5, "y": 5, "open": "https://example.test/next"}}}
+        if method == "Target.createTarget":
+            return {"targetId": "tab"}
+        if method == "Target.attachToTarget":
+            return {"sessionId": "tab-session"}
+        return {}
+
+    monkeypatch.setattr(browser, "cdp", cdp)
+    instance = browser.Browser.__new__(browser.Browser)
+    instance.target, instance.session, instance.openers, instance.viewport = "owned", "s", [], (800, 600)
+    instance.fresh = Mock(return_value=True)
+    instance._wait_loaded = Mock()
+    instance.act({"id": "e1", "kind": "click", "node": 1}, page())
+    assert "Input.dispatchMouseEvent" not in calls
+    assert (instance.target, instance.openers) == ("tab", [("owned", "s")])
+    assert calls.index("Page.addScriptToEvaluateOnNewDocument") < calls.index("Page.navigate")
+
+
 def test_browser_setup_timeout_closes_its_tab(monkeypatch):
     import jev_ultrafast.browser as browser
 
@@ -467,7 +533,7 @@ def test_browser_setup_timeout_closes_its_tab(monkeypatch):
         browser.Browser("https://example.test/")
     assert [method for method, _ in calls] == [
         "Target.createTarget", "Target.attachToTarget",
-        "Emulation.setDeviceMetricsOverride", "Target.closeTarget",
+        "Emulation.setDeviceMetricsOverride", "Target.getTargets", "Target.closeTarget",
     ]
     assert all(params["_response_timeout"] == 15 for _, params in calls)
     assert calls[0][1]["background"] is False

@@ -208,8 +208,31 @@ function MessageCard({ message, progress, onRecheck, rechecking, actions }: { me
   </article>;
 }
 
-function Preview({ state, frame, onState, overlays, detailsOpen, onDetailsToggle, width, maxWidth, onResize, onViewportChange, syncError }: {
+function AddressBar({ url, disabled, onNavigate }: { url: string; disabled: boolean; onNavigate: (body: Record<string, string>) => void }) {
+  const { t } = useI18n();
+  const [address, setAddress] = useState(url);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { if (!editing) setAddress(url); }, [url, editing]);
+  return <form className="address-bar" onSubmit={(event) => {
+    event.preventDefault();
+    const typed = address.trim();
+    if (!typed) return;
+    onNavigate({ action: 'url', url: /^https?:\/\//i.test(typed) ? typed : `https://${typed}` });
+    setEditing(false);
+    (document.activeElement as HTMLElement | null)?.blur();
+  }}>
+    <button type="button" className="nav-btn" disabled={disabled || !url} aria-label={t('goBack')} title={t('goBack')} onClick={() => onNavigate({ action: 'back' })}>←</button>
+    <button type="button" className="nav-btn" disabled={disabled || !url} aria-label={t('goForward')} title={t('goForward')} onClick={() => onNavigate({ action: 'forward' })}>→</button>
+    <button type="button" className="nav-btn" disabled={disabled || !url} aria-label={t('reload')} title={t('reload')} onClick={() => onNavigate({ action: 'reload' })}>↻</button>
+    <input className="preview-url" value={address} placeholder={t('noSite')} aria-label={t('address')} disabled={disabled} spellCheck={false}
+      onFocus={(event) => { setEditing(true); event.currentTarget.select(); }} onBlur={() => setEditing(false)}
+      onChange={(event) => setAddress(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { setAddress(url); event.currentTarget.blur(); } }} />
+  </form>;
+}
+
+function Preview({ state, frame, onState, overlays, detailsOpen, onDetailsToggle, width, maxWidth, onResize, onViewportChange, syncError, onNavigate, navigationDisabled }: {
   state: Snapshot; overlays: boolean; detailsOpen: boolean; onDetailsToggle: () => void;
+  onNavigate: (body: Record<string, string>) => void; navigationDisabled: boolean;
   frame:PreviewCapture|null; onState:(state:Snapshot)=>void;
   width: number; maxWidth: number; onResize: (width: number) => void;
   onViewportChange: (viewport: Viewport | null) => void; syncError: string;
@@ -261,7 +284,7 @@ function Preview({ state, frame, onState, overlays, detailsOpen, onDetailsToggle
           event.preventDefault(); onResize(width + (event.key === 'ArrowLeft' ? 24 : -24));
         }
       }} />
-    <div className="preview-head"><span className="preview-dot" /><span className="preview-url" title={page?.url || state.last_url || ''}>{page?.url || t('noSite')}</span>
+    <div className="preview-head"><span className="preview-dot" /><AddressBar url={page?.url || ''} disabled={navigationDisabled} onNavigate={onNavigate} />
       <span className="preview-label">{t('preview').toLocaleUpperCase()}</span>
       <button className="icon-btn details-toggle" type="button" aria-label={detailsOpen ? t('closeDetails') : t('openDetails')} title={t('executionDetails')} aria-expanded={detailsOpen} aria-controls="execution-details" onClick={onDetailsToggle}><Icon name="panel" /></button></div>
     <div className="preview-content" ref={content}>
@@ -715,7 +738,9 @@ function App() {
         decision: capture?.revision === state.preview_revision ? state.decision : null,
       } : { session_id: null, messages: [], chat_status: 'idle', progress: '' }} frame={capture} onState={manualState} overlays={overlays} detailsOpen={detailsOpen}
         onDetailsToggle={() => { if (window.innerWidth <= 900) setSidebarOpen(false); setDetailsOpen((value) => !value); }} width={effectivePreviewWidth} maxWidth={maxPreviewWidth} onResize={resizePreview}
-        onViewportChange={onViewportChange} syncError={viewportSyncError || previewError} />
+        onViewportChange={onViewportChange} syncError={viewportSyncError || previewError}
+        onNavigate={(body) => { void perform('navigate', { ...body, ...(!stateRef.current?.session_id ? viewportRef.current : {}) }); }}
+        navigationDisabled={disabledSession} />
         {detailsOpen && <ExecutionSidebar state={(detailState?.session_id === state?.session_id && detailState?.turn_id === state?.turn_id ? detailState : state) || { session_id: null, messages: [], chat_status: 'idle', progress: '' }} />}</>}
     </>}
   </div>;

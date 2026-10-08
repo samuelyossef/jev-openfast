@@ -83,7 +83,7 @@ def command(name, body, owner_token=None):
     if not isinstance(body, dict):
         raise ValueError("Envie um objeto JSON.")
     viewport = None
-    if name in {"session", "message"} and ("width" in body or "height" in body):
+    if name in {"session", "message", "navigate"} and ("width" in body or "height" in body):
         viewport = validate_viewport(body.get("width"), body.get("height"))
     if name == "settings":
         key = decrypt_transport_key(body.get("encrypted_key")).strip()
@@ -154,6 +154,13 @@ def command(name, body, owner_token=None):
         SESSION = ChatSession(on_change=STORE.save, viewport=viewport)
         SESSION.message(body)
         STORE.select(SESSION.id)
+    elif name == "navigate" and SESSION is None:
+        if body.get("session_id") is not None:
+            raise ValueError("Esta conversa não está mais ativa. Recarregue a página.")
+        new_session = ChatSession(on_change=STORE.save, viewport=viewport)
+        new_session.navigate_user(body)  # validates before anything is stored or opened
+        SESSION = new_session
+        STORE.select(SESSION.id)
     elif name == "reset":
         if SESSION is None or body.get("session_id") != SESSION.id:
             raise ValueError("Esta conversa não está mais ativa. Recarregue a página.")
@@ -168,7 +175,7 @@ def command(name, body, owner_token=None):
         actions = {
             "message": lambda: SESSION.message(body), "approve": lambda: SESSION.approve(body),
             "reject": lambda: SESSION.reject(body), "pause": SESSION.pause, "resume": SESSION.resume,
-            "verify": SESSION.recheck,
+            "verify": SESSION.recheck, "navigate": lambda: SESSION.navigate_user(body),
             "viewport": lambda: SESSION.resize_viewport(body.get("width"), body.get("height")),
         }
         if name not in actions:

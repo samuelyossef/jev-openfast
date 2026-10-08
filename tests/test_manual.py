@@ -19,7 +19,7 @@ def session(offline, monkeypatch):  # noqa: F811
     browser.human = []
     browser.document = "one"
     monkeypatch.setattr(browser, "manual_mode", lambda _active: None, raising=False)
-    monkeypatch.setattr(browser, "manual_context", lambda: {
+    monkeypatch.setattr(browser, "manual_context", lambda follow=True: {
         "document": browser.document, "w": browser.page["w"], "h": browser.page["h"],
         "url": browser.page["url"], "title": "Test", "protected": True}, raising=False)
     monkeypatch.setattr(browser, "manual_event", lambda event, group: browser.human.append(copy.deepcopy(event)),
@@ -244,7 +244,8 @@ def test_http_manual_requires_local_auth_session_owner_and_current_frame(local_s
     view = client.post("/api/session", json={"url": "https://example.org"}).json()
     session, browser = demo.SESSION, demo.SESSION.agent.browser
     monkeypatch.setattr(browser, "manual_mode", lambda _active: None, raising=False)
-    monkeypatch.setattr(browser, "manual_context", lambda: {"document": "one", "w": 1120, "h": 780}, raising=False)
+    monkeypatch.setattr(browser, "manual_context", lambda follow=True: {"document": "one", "w": 1120, "h": 780},
+                        raising=False)
     inputs = []
     monkeypatch.setattr(browser, "manual_event", lambda event, group: inputs.append(event), raising=False)
     monkeypatch.setattr(session.preview, "begin_manual", lambda *_a: session.preview.invalidate())
@@ -288,7 +289,7 @@ def test_expired_uncertain_input_cannot_resume_without_explicit_recovery(session
 
 
 def test_slow_manual_capture_does_not_block_input_and_discards_old_viewport(session, monkeypatch):
-    from jev_ultrafast.preview import Preview
+    from jev_ultrafast.preview import MANUAL_INTERVAL, Preview
 
     camera = session.agent.browser
     entered, released = threading.Event(), threading.Event()
@@ -315,13 +316,47 @@ def test_slow_manual_capture_does_not_block_input_and_discards_old_viewport(sess
                 break
             time.sleep(0.01)
         assert captured["page"]["w"] == 800 and captured["manual"] and not captured["elements"]
-        assert len(starts) >= 2 and starts[1] - starts[0] >= 0.19
+        assert len(starts) >= 2 and starts[1] - starts[0] >= MANUAL_INTERVAL - 0.01
         assert not session.snapshot()["page"].get("screenshot")
     finally:
         released.set()
         session.preview.close()
         session.preview.worker.join(3)
 
+
+
+def test_manual_preview_streams_screencast_frames_and_stops_on_exit(session, monkeypatch):
+    from jev_ultrafast.preview import Preview
+
+    camera = session.agent.browser
+    frames = {"number": 1}
+    stopped = []
+    monkeypatch.setattr(camera, "screencast", lambda: (f"frame-{frames['number']}", frames["number"]), raising=False)
+    monkeypatch.setattr(camera, "stop_screencast", lambda: stopped.append(True), raising=False)
+    monkeypatch.setattr(camera, "capture", lambda: pytest.fail("polled screenshot while streaming"), raising=False)
+    monkeypatch.setattr(session.preview, "begin_manual", lambda *args: Preview.begin_manual(session.preview, *args))
+
+    def shown(expected):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            captured = session.preview.snapshot()["capture"]
+            if captured and captured["page"]["screenshot"] == expected:
+                return captured
+            time.sleep(0.01)
+        raise AssertionError(f"{expected} was not shown")
+
+    try:
+        token = take(session)
+        first = shown("frame-1")
+        time.sleep(0.2)  # no repaint: the cached frame and its revision stay as they are
+        assert session.preview.snapshot()["capture"]["revision"] == first["revision"]
+        frames["number"] = 2
+        assert shown("frame-2")["revision"] > first["revision"]
+        session.manual.end({"owner_token": token, "resume": False})
+        assert stopped
+    finally:
+        session.preview.close()
+        session.preview.worker.join(3)
 
 
 def blocked(reason):
