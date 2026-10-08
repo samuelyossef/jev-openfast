@@ -276,7 +276,7 @@ document.querySelector('.inspector').addEventListener('toggle', () => {
 });
 async function pollPreview() {
   await refreshPreview();
-  setTimeout(pollPreview, state?.manual?.status === 'active' ? 200 : 500);
+  setTimeout(pollPreview, state?.manual?.status === 'active' ? 80 : 500);
 }
 let manualBusy=false;
 function manualState(next) { stateEpoch+=1;state=next;render(); }
