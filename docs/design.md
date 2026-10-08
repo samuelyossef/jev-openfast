@@ -34,7 +34,7 @@ The chat session (`chat.py`, `assistant.py`) wraps the decision loop above and o
 
 ## Handoff and manual control
 
-When the operation is `BLOCKED`, a speculative extra head of the same request names why (`LOGIN`, `CAPTCHA`, `VERIFICATION_CODE`, `PERSONAL_DATA`, `OTHER`). The reason only words the request for help; it never causes an action. A task that makes no progress, or a text field whose value only the user has, opens the same handoff.
+When the operation is `BLOCKED`, a speculative extra head of the same request names why (`LOGIN`, `CAPTCHA`, `VERIFICATION_CODE`, `PERSONAL_DATA`, `OTHER`). The reason only words the request for help; it never causes an action. A `BLOCKED` without a human-only reason (`OTHER` or none) is chosen again once per turn, with feedback to use a visible control that continues, dismisses or retries; only a second block asks the user. A task that makes no progress, or a text field whose value only the user has, opens the same handoff.
 
 The chat then pauses and shows a card. **Take control** requests an exclusive owner token (kept in `sessionStorage`); once no worker is active, input events (pointer, wheel, keys, text) go through `manual.py`, which validates the frame the user saw, the sequence number and the owner, and never repeats an event that may have committed. Text typed by the human is registered with an in-page privacy script (`privacy.js`) so it is redacted from every later observation. **Continue with JEV** releases input, re-observes the page, records that a human acted and resumes the same run; **Exit manual control** leaves the task paused. Control expires after 60 seconds without input.
 

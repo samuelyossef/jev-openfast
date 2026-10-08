@@ -330,6 +330,32 @@ def blocked(reason):
         "probabilities": {"BLOCKED": 1}, "confidence": 1, "usage": {}}
 
 
+@pytest.mark.parametrize("answers, phase", [
+    (["OTHER", "DONE"], "completed"),  # a vague block that had a way forward: the user is never asked
+    ([None, "DONE"], "completed"),
+    (["OTHER", "OTHER"], "paused"),  # still blocked after reconsidering: ask the user
+    (["CAPTCHA"], "paused"),  # only the user can solve it: ask at once
+])
+def test_vague_block_is_reconsidered_once_before_asking_the_user(session, monkeypatch, answers, phase):
+    feedback = []
+
+    def choose(*_a, verification_feedback=None, **_kw):
+        feedback.append(verification_feedback)
+        answer = answers[len(feedback) - 1]
+        if answer == "DONE":
+            return {"choice": "DONE", "operation": "DONE", "target": None, "latency_ms": 1,
+                    "probabilities": {"DONE": 1}, "confidence": 1, "usage": {}}
+        return blocked(answer)()
+
+    monkeypatch.setattr(agent, "choose", choose)
+    send(session)
+    session.worker.join(3)
+    assert session.phase == phase and len(feedback) == len(answers)
+    assert any(m.get("kind") == "handoff" for m in session.messages) is (phase == "paused")
+    assert feedback[0] is None and all(item[-1] == chat.RECONSIDER_BLOCKED for item in feedback[1:])
+    assert session.agent.browser.mutations == []
+
+
 def test_handoff_card_names_the_reason_and_continue_resumes_automatically(session, monkeypatch):
     monkeypatch.setattr(agent, "choose", blocked("CAPTCHA"))
     view = send(session)

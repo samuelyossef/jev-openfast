@@ -9,6 +9,7 @@ Set every requested filter/control; a matching result alone does not prove a req
 Do not toggle a checkbox, switch, or radio already in the requested state.
 Close or decline cookie banners, pop-ups and overlays that hide what the goal needs.
 Close a sign-in prompt the goal does not require; choose BLOCKED only when no alternative exists.
+A page offering Continue, Retry, a location or language choice, or a dismissible notice is not BLOCKED.
 When the goal names a site, use that site's own search. A goal to search or list items is DONE when
 matching results are visible; a goal to find information or answer a question needs the page that
 shows it, so open the best matching result.

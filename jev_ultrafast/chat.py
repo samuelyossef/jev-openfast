@@ -83,6 +83,15 @@ HANDOFF = {
     "OTHER": "Preciso da sua ajuda nesta página. Assuma o controle, resolva o bloqueio e escolha Continuar com Jev.",
 }
 
+# Reasons only the user can resolve; any other BLOCKED is reconsidered once per turn.
+HUMAN_ONLY = {"LOGIN", "CAPTCHA", "VERIFICATION_CODE", "PERSONAL_DATA"}
+RECONSIDER_BLOCKED = {
+    "requirement": "Make progress without the user when the page allows it",
+    "reason": "BLOCKED was chosen without a login, CAPTCHA, verification code or personal data. Use a visible "
+              "control that continues, dismisses, closes or retries. Choose BLOCKED again only if none can.",
+}
+
+
 class ChatSession:
     def __init__(self, url=None, on_change=None, viewport=None):
         self.id = secrets.token_urlsafe(18)
@@ -126,6 +135,7 @@ class ChatSession:
         self.pending = None
         self.approved_commitment = False
         self.recovery_attempts = 0
+        self.reconsidered_block = False
         self.navigation = []
         self.resume_stage = "begin"
         self.reply_index = None
@@ -411,6 +421,7 @@ class ChatSession:
         self.manual.wait_ms = 0
         self.manual.can_resume = False
         self.recovery_attempts = 0
+        self.reconsidered_block = False
         self.turn_id = message_id
         self.message_ids.add(message_id)
         self.messages.append({"role": "user", "content": self.goal, "turn_id": message_id})
@@ -555,7 +566,17 @@ class ChatSession:
                     self.agent.state["status"] = "done"
                     break
                 if decision["choice"] == "BLOCKED":
-                    self._handoff(decision.get("blocked_reason"))
+                    reason = decision.get("blocked_reason")
+                    if reason not in HUMAN_ONLY and not self.reconsidered_block:
+                        # A BLOCKED without a human-only reason usually hides a way forward (an interstitial,
+                        # a notice, a retry). Choose once more before asking the user to take control.
+                        self.reconsidered_block = True
+                        self.agent.state["verification_feedback"] = [
+                            *(self.agent.state.get("verification_feedback") or []), RECONSIDER_BLOCKED]
+                        self.agent.state["decision"] = None
+                        self.agent.state["status"] = "ready"
+                        continue
+                    self._handoff(reason)
                     return
                 if decision["choice"] not in {"DONE", "BLOCKED"}:
                     action = next(a for a in page["actions"] if a["id"] == decision["choice"])
