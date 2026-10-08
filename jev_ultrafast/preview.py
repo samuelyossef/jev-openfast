@@ -80,6 +80,7 @@ class Preview:
     def _run(self):
         last_started = 0
         shown = None  # screencast frame number currently cached
+        context, refreshed = None, 0  # the page context seen with the previous frame, and when it was read
         while not self.closed.is_set():
             self.wake.wait(timeout=MANUAL_INTERVAL if self.manual else None)
             self.wake.clear()
@@ -95,14 +96,24 @@ class Preview:
                     continue
                 last_started = time.monotonic()
                 try:
-                    before = manual_browser.manual_context()
                     if hasattr(manual_browser, "screencast"):
                         screenshot, number = manual_browser.screencast()
                         if number == shown and self.cached is not None:
-                            continue  # the page did not repaint
+                            # The page did not repaint. A pop-up opened by the last click does not repaint this
+                            # tab either, so look for one now and then.
+                            if time.monotonic() - refreshed > 0.5:
+                                context, refreshed = manual_browser.manual_context(), time.monotonic()
+                            continue
+                        # One context per frame: it must match the one read before the frame arrived, which is
+                        # what the before/after pair around a polled capture used to guarantee.
+                        before, context = context, manual_browser.manual_context(follow=False)
+                        refreshed, after = time.monotonic(), context
+                        if before is None:
+                            continue
                     else:
+                        before = manual_browser.manual_context()
                         screenshot, number = manual_browser.capture(), None
-                    after = manual_browser.manual_context(follow=False)
+                        after = manual_browser.manual_context(follow=False)
                     if not screenshot or any(before[k] != after[k] for k in ("document", "w", "h")):
                         continue
                     with manual.lock:

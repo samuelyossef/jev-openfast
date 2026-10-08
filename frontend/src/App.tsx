@@ -493,7 +493,7 @@ function App() {
           if (!cancelled && stateRef.current?.session_id === sessionId) setPreviewError(translate(currentLocale(), 'updatePreviewError'));
         }
       }
-      if (!cancelled) timer = window.setTimeout(pollPreview, stateRef.current?.manual?.status === 'active' ? 200 : 500);
+      if (!cancelled) timer = window.setTimeout(pollPreview, stateRef.current?.manual?.status === 'active' ? 80 : 500);
     };
     void pollPreview();
     return () => { cancelled = true; window.clearTimeout(timer); };
