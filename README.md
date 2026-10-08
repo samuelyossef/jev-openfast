@@ -11,7 +11,8 @@ a login, a CAPTCHA or a code.
 
 ![JEV OpenFast Browser: a local AI browser agent you talk to in chat](docs/social-preview.png)
 
-The model never writes selectors or code. Each page becomes a numbered table of elements; the model returns an
+The model never writes selectors or code. Each page becomes a numbered table of elements; [TypeSafe's Jev](https://openrouter.ai/typesafe/jev-1.13),
+a structured decision model that answers typed questions with probabilities, returns an
 operation (`CLICK`, `TYPE_TEXT`, `SELECT`, `PRESS_ENTER`, `SCROLL_UP`, `SCROLL_DOWN`, `WAIT`, `DONE`, `BLOCKED`)
 and a target from that table, and the code executes it. A small text model writes words only when the operation
 is `TYPE_TEXT`.
@@ -108,7 +109,7 @@ Set variables in `.env` (see [.env.example](.env.example)).
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | empty | Provider key. Can also be saved from Settings. |
-| `TYPESAFE_MODEL` | `typesafe/jev-1.13` | Model that chooses operation and target. |
+| `TYPESAFE_MODEL` | `typesafe/jev-1.13` | [TypeSafe's Jev](https://openrouter.ai/typesafe/jev-1.13) decision model: chooses the operation and target. |
 | `TEXT_MODEL` | `inception/mercury-2.5` | Small model for `TYPE_TEXT` and the chat helpers. |
 | `TEXT_MODEL_REASONING` | `none` | Reasoning setting for the text model. |
 | `TYPESAFE_DEMO_PORT` | `8766` | Local server port. |
@@ -250,4 +251,5 @@ The full list, including the projects this app depends on (Browser Harness, Open
 
 This project builds on the original Jev Ultrafast by Browser Use (MIT); their copyright notice is kept as the
 license requires. It runs on [Browser Harness](https://github.com/browser-use/browser-harness) for Chrome control and
-uses [OpenRouter](https://openrouter.ai/) and TypeSafe models.
+uses [OpenRouter](https://openrouter.ai/) to reach [TypeSafe's Jev](https://openrouter.ai/typesafe/jev-1.13) ([docs](https://docs.typesafe.ai)), the decision model that
+chooses each action, plus a small text model for the words it types.
