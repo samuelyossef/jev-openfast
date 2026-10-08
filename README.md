@@ -25,7 +25,7 @@ is `TYPE_TEXT`.
 [Features](#features) · [Quick start](#quick-start) · [Using it](#using-it) · [Configuration](#configuration) ·
 [Troubleshooting](#troubleshooting) · [Library](#use-it-as-a-library) · [How it works](#how-it-works) ·
 [Development](#development) · [Limits](#limits) · [Contributing](#contributing-and-security) ·
-[Credits](#credits-and-license)
+[Contributors](#contributors) · [Credits](#credits-and-license)
 
 ## Features
 
@@ -230,6 +230,18 @@ they come from a few runs of specific tasks and are not a general reliability be
 Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as described in
 [SECURITY.md](SECURITY.md). Release notes are in [CHANGELOG.md](CHANGELOG.md).
+
+## Contributors
+
+| Who | Role |
+| --- | --- |
+| [Browser Use](https://github.com/browser-use) | Original Jev Ultrafast project this one builds on (decision loop, DOM snapshot, first demos). |
+| [Gregor Žunič](https://github.com/gregpr07) | Author of the original commits, kept in this repository's history. |
+| [Samuel Yossef](https://github.com/samuelyossef) | Maintainer: chat, manual control, live preview, verification, history, docs. |
+
+[![Contributors](https://contrib.rocks/image?repo=samuelyossef/jev-openfast-browser)](https://github.com/samuelyossef/jev-openfast-browser/graphs/contributors)
+
+Want to appear here? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credits and license
 
