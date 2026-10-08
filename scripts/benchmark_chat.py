@@ -81,13 +81,15 @@ class SimulatedBrowser:
         self.closed = True
 
 
+ARTICLE_LINK = ("""<a href="#article" onclick="document.querySelector('#result').textContent='Artigo aberto'">"""
+                "Artigo</a>")
 HTML = """<!doctype html><meta charset="utf-8"><title>Offline benchmark</title>
 <h1>Fixture de desempenho</h1><p id="result">Pronta</p><p id="clock">Relógio</p>
 <form onsubmit="event.preventDefault();document.querySelector('#result').textContent=
 'Resultado: '+document.querySelector('input').value">
 <label>Busca<input aria-label="Busca"></label><button>Buscar</button></form>
 <button onclick="document.querySelector('#result').textContent='Publicado'">Publicar</button>
-<a href="#article" onclick="document.querySelector('#result').textContent='Artigo aberto'">Artigo</a>
+""" + ARTICLE_LINK + """
 <script>let n=0;if(location.pathname.endsWith('/dynamic'))window.clock=setInterval(()=>
 document.querySelector('#clock').textContent='Relógio '+(++n),70)</script>"""
 
@@ -103,6 +105,13 @@ def child(source, case, real_browser):
     if real_browser:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
+                if self.path == "/article":
+                    time.sleep(0.3)  # a slow server: the old document stays visible after the click
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(HTML.replace(">Pronta<", ">Artigo aberto<").encode())
+                    return
                 if self.path == "/delayed-script":
                     time.sleep(0.2)
                     self.send_response(200)
@@ -121,6 +130,8 @@ def child(source, case, real_browser):
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
                 html = HTML
+                if case == "page_navigation":
+                    html = html.replace(ARTICLE_LINK, '<a href="/article">Artigo</a>')
                 if case == "slow_resource":
                     html += ('<script defer src="/delayed-script"></script>'
                              '<img width="1" height="1" src="/delayed-image" onload="window.assetLoaded=true">')
@@ -147,7 +158,7 @@ def child(source, case, real_browser):
     model.CLIENT.post = forbidden
     model.openrouter_key = assistant.openrouter_key = lambda: "offline"
 
-    calls, choices, generated = [], [], []
+    calls, choices, generated, decision_pages = [], [], [], []
     terminal_changed = False
 
     def choose(page, goal, history, **_kwargs):
@@ -159,7 +170,7 @@ def child(source, case, real_browser):
             label = "Busca" if not executed else "Buscar" if len(executed) == 1 else None
         elif case == "publication":
             label = "Publicar" if not executed else None
-        elif case in {"navigation", "slow_resource"}:
+        elif case in {"navigation", "slow_resource", "page_navigation"}:
             label = "Artigo" if not executed else None
         action = next((a for a in page["actions"] if a["label"] == label
                        and (label != "Busca" or a["kind"] == "fill")), None)
@@ -168,6 +179,7 @@ def child(source, case, real_browser):
         _, targets, _ = model.action_space(page["actions"])
         target = next((k for k, a in targets.get(operation, {}).items() if a["id"] == selected), None)
         choices.append(operation)
+        decision_pages.append(f"{page['url'].rsplit('/', 1)[-1]}: {page['text'][:40]}")
         if case == "dynamic" and selected == "DONE" and real_browser and not terminal_changed:
             session.agent.browser.evaluate("clearInterval(window.clock); "
                                            "document.querySelector('#clock').textContent='Atualização final'")
@@ -192,6 +204,7 @@ def child(source, case, real_browser):
             output = {"url": explicit.group() if explicit else "-", "reply": "Vou verificar."}
             if kind == "request":
                 output["intent"] = "answer" if case == "question" else "task"
+                output["task"] = context["goal"]
         elif kind in {"intent", "answer"}:
             output = {"reply": context["page"]["text"]}
             if kind == "intent":
@@ -201,7 +214,7 @@ def child(source, case, real_browser):
                       "description": "Publicar conteúdo da fixture?"}
         elif kind == "verify":
             quote = {"publication": "Publicado", "navigation": "Artigo aberto",
-                     "slow_resource": "Artigo aberto"}.get(case, "Resultado: azul")
+                     "slow_resource": "Artigo aberto", "page_navigation": "Artigo aberto"}.get(case, "Resultado: azul")
             present = quote in context["page"]["text"]
             output = {"satisfied": present, "checks": [{"requirement": context["goal"],
                       "status": "confirmed" if present else "unknown", "evidence": [quote] if present else [],
@@ -222,7 +235,7 @@ def child(source, case, real_browser):
     started = time.perf_counter()
     goals = {"question": "Qual é o texto da página", "publication": "Publique o conteúdo",
              "navigation": "Abra o artigo", "search": "Busque azul", "dynamic": "Busque azul",
-             "slow_capture": "Busque azul", "slow_resource": "Abra o artigo"}
+             "slow_capture": "Busque azul", "slow_resource": "Abra o artigo", "page_navigation": "Abra o artigo"}
     session.message({"message": f"{goals[case]} em {url}", "message_id": "benchmark"})
     session.worker.join(15)
     if session.phase == "awaiting_confirmation":
@@ -235,21 +248,22 @@ def child(source, case, real_browser):
     verified = (view["chat_status"] == "answered" if case == "question"
                 else bool(view["messages"][-1].get("verification", {}).get("satisfied")))
     expected = {"question": "Pronta", "publication": "Publicado", "navigation": "Artigo aberto",
-                "slow_resource": "Artigo aberto"}.get(
+                "slow_resource": "Artigo aberto", "page_navigation": "Artigo aberto"}.get(
         case, "Resultado: azul")
     if real_browser:
         observed = session.agent.browser.evaluate(
             "({text:document.querySelector('#result').textContent,query:document.querySelector('input').value,"
             "readyState:document.readyState,assetLoaded:!!window.assetLoaded,scriptReady:!!window.scriptReady})")
         independent = observed["text"] == expected
-        if case == "slow_resource":
-            independent = independent and observed["scriptReady"] and sum(
+        if case in {"slow_resource", "page_navigation"}:
+            independent = independent and (case != "slow_resource" or observed["scriptReady"]) and sum(
                 h["execution"] == "executed" for h in view["history"]) == 1
     else:
         observed = session.agent.browser.page["text"]
         independent = observed == expected
     result = {"case": case, "elapsed_ms": elapsed, "verified": verified, "independent": independent,
-              "helper_calls": calls, "decisions": choices, "text_calls": len(generated),
+              "helper_calls": calls, "decisions": choices, "decision_pages": decision_pages,
+              "text_calls": len(generated),
               "actions": [{k: h[k] for k in ("kind", "action", "text", "execution")} for h in view.get("history", [])],
               "timing": view.get("timing"), "observed": observed}
     session.close()
@@ -260,16 +274,20 @@ def child(source, case, real_browser):
 
 
 def main():
+    global HELPER_DELAY
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path)
-    parser.add_argument("--case", choices=(*CASES, "slow_resource"))
+    parser.add_argument("--case", choices=(*CASES, "slow_resource", "page_navigation"))
     parser.add_argument("--baseline", type=Path, default=ROOT / "artifacts/performance-baseline")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--real-browser", action="store_true")
+    parser.add_argument("--helper-delay", type=float, default=HELPER_DELAY,
+                        help="simulated latency of each text-helper call, in seconds")
     args = parser.parse_args()
-    if args.case == "slow_resource" and not args.real_browser:
-        parser.error("slow_resource requires --real-browser")
+    if args.case in {"slow_resource", "page_navigation"} and not args.real_browser:
+        parser.error(f"{args.case} requires --real-browser")
+    HELPER_DELAY = args.helper_delay
     if args.source:
         return child(args.source.resolve(), args.case, args.real_browser)
     baseline = args.baseline.resolve()
@@ -284,6 +302,7 @@ def main():
                 cmd = [sys.executable, str(Path(__file__).resolve()), "--source", str(source), "--case", case]
                 if args.real_browser:
                     cmd.append("--real-browser")
+                cmd += ["--helper-delay", str(HELPER_DELAY)]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=40, check=True)
                 run = {"arm": arm, "repeat": repeat + 1, **json.loads(result.stdout)}
                 runs.append(run)

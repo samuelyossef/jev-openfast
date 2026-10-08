@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
 from . import assistant
-from .agent import Agent
+from .agent import Agent, open_blank
 from .browser import StalePage, validate_viewport
 from .manual import Manual
 from .model import MissingValue
@@ -438,44 +438,62 @@ class ChatSession:
                 call["turn_id"] = self.turn_id
 
     def _begin(self):
-        route = self._ask(
-            "request",
-            {
-                "goal": self.goal,
-                "response_language": LANGUAGES[self.locale],
-                "conversation": self.conversation,
-                "current_url": self.agent.state["page"]["url"] if self.agent else None,
-            },
-        )
-        # The self-contained restatement drives the agent and the checks; the chat keeps the user's words.
-        self.task = route["task"].strip() or self.goal  # page questions often come back without a restatement
-        if route["url"] != "-":
-            url = routed_url(route["url"], self.goal)
-            if self.pause_requested.is_set():
-                self._paused(stage="begin")
-                return
-            if self.agent is None or self.agent.state["page"]["url"] != url:
-                self.navigation.append({"turn_id": self.turn_id, "url": url, "status": "requested"})
-                self._publish()
-                if self.agent is None:
-                    self.agent = Agent(url, None, screenshots=False, viewport=self.viewport)
-                    self._attach_timings()
-                else:
-                    self.agent.browser.navigate(url)
-                self.navigation[-1]["status"] = "opened"
-        elif self.agent is None:
-            self._reply(
-                "Qual site devo abrir? Diga o nome do site ou envie a URL junto com seu pedido.", kind="clarify"
+        # Opening a tab takes about a second; do it on about:blank while the request helper runs.
+        # The destination is navigated only after the helper's URL passes routed_url.
+        opening = None
+        if self.agent is None:
+            pool = ThreadPoolExecutor(max_workers=1)  # not a `with` block: leaving it would wait for the tab
+            opening = pool.submit(open_blank, self.viewport)
+            pool.shutdown(wait=False)
+        opened = False
+        try:
+            route = self._ask(
+                "request",
+                {
+                    "goal": self.goal,
+                    "response_language": LANGUAGES[self.locale],
+                    "conversation": self.conversation,
+                    "current_url": self.agent.state["page"]["url"] if self.agent else None,
+                },
             )
-            self.phase, self.progress = "answered", "Aguardando o destino."
-            self.turn_finished = time.perf_counter()
-            self._publish()
-            return
+            # The self-contained restatement drives the agent and the checks; the chat keeps the user's words.
+            self.task = route["task"].strip() or self.goal  # page questions often come back without a restatement
+            if route["url"] != "-":
+                url = routed_url(route["url"], self.goal)
+                if self.pause_requested.is_set():
+                    self._paused(stage="begin")
+                    return
+                if self.agent is None or self.agent.state["page"]["url"] != url:
+                    self.navigation.append({"turn_id": self.turn_id, "url": url, "status": "requested"})
+                    self._publish()
+                    if self.agent is None:
+                        browser, opening = opening.result(), None
+                        self.agent = Agent(url, None, screenshots=False, viewport=self.viewport, browser=browser)
+                        self._attach_timings()
+                        opened = True
+                    else:
+                        self.agent.browser.navigate(url)
+                    self.navigation[-1]["status"] = "opened"
+            elif self.agent is None:
+                self._reply(
+                    "Qual site devo abrir? Diga o nome do site ou envie a URL junto com seu pedido.", kind="clarify"
+                )
+                self.phase, self.progress = "answered", "Aguardando o destino."
+                self.turn_finished = time.perf_counter()
+                self._publish()
+                return
+        finally:
+            if opening is not None:
+                try:
+                    opening.result().close()
+                except Exception:
+                    pass  # The tab never opened, or already closed with its error.
         if self.pause_requested.is_set():
             self._paused(stage="begin")
             return
         self._apply_viewport()
-        self.agent.start_task(self.task, self.conversation)
+        # A tab opened for this goal was observed a moment ago; a resize re-observes it itself.
+        self.agent.start_task(self.task, self.conversation, observe=not opened or self.viewport_error is not None)
         self.initial_page = assistant.page_context(self.agent.state["page"])
         self._publish()
         if self.pause_requested.is_set():

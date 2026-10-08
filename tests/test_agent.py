@@ -547,6 +547,19 @@ def test_text_helper_rejects_invalid_values(monkeypatch, content):
         model.field_text({"goal": "Find a flight"})
 
 
+@pytest.mark.parametrize("age, probed", [(0.0, False), (loop.RECENT_OBSERVATION_S + 1, True)])
+def test_prediction_probes_freshness_unless_just_observed(runner, monkeypatch, age, probed):
+    runner.state["status"] = "ready"
+    monkeypatch.setattr(loop, "choose", Mock(return_value=decision()))
+    runner.observed_at = time.perf_counter() - age
+    runner.command("predict")
+    assert runner.state["browser"].fresh.called is probed
+    assert runner.observed_at is None  # consumed: a later prediction probes again
+    runner.state["status"] = "ready"
+    runner.command("predict")
+    runner.state["browser"].fresh.assert_called()
+
+
 def test_navigation_during_prediction_reobserves_without_action(runner):
     runner.state["browser"].fresh.side_effect = StalePage("Document navigating")
     runner.command("tick")

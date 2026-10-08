@@ -59,7 +59,8 @@ class FakeBrowser:
         return not self.changed
 
     def navigate(self, url):
-        self.mutations.append(("navigate", url))
+        if self.page["url"] != "about:blank":  # leaving the blank tab opened in advance is part of opening
+            self.mutations.append(("navigate", url))
         self.page.update(url=url, text="Pronta", fingerprint=f"opened-{url}")
 
     def act(self, action, page, text=None):
@@ -530,27 +531,33 @@ def test_first_message_opens_site_and_followup_navigates_same_tab(offline):
     assert second["navigation"][-1]["status"] == "opened"
 
 
+def assert_only_blank_tabs_closed():
+    """A tab opened in advance on about:blank is closed unused when no destination is accepted."""
+    assert all(browser.closed and browser.page["url"] == "about:blank" and not browser.mutations
+               for browser in FakeBrowser.instances)
+
+
 def test_route_can_clarify_without_opening_browser(offline):
     offline[2]["route"] = {"url": "-", "reply": "Qual site devo usar?"}
     session = chat.ChatSession()
     view = send(session, "Faça isso", "first")
     assert view["chat_status"] == "answered"
     assert "Qual site devo abrir?" in view["messages"][-1]["content"]
-    assert not FakeBrowser.instances
+    assert_only_blank_tabs_closed()
 
 
 def test_route_cannot_answer_page_question_without_observation(offline):
     offline[2]["route"] = {"mode": "answer", "url": "-", "reply": "O título é conhecido."}
     view = send(chat.ChatSession(), "Qual é o título da página inicial da Wikipédia?", "first")
     assert view["chat_status"] == "error"
-    assert not FakeBrowser.instances
+    assert_only_blank_tabs_closed()
 
 
 def test_inferred_local_url_requires_explicit_user_url(offline):
     offline[2]["route"] = {"url": "http://127.0.0.1:9999/", "reply": "Vou abrir."}
     view = send(chat.ChatSession(), "Abra a página de teste", "first")
     assert view["chat_status"] == "error"
-    assert not FakeBrowser.instances
+    assert_only_blank_tabs_closed()
 
 
 def test_question_observes_fresh_page_without_acting(offline):
@@ -1066,7 +1073,7 @@ def test_first_message_passes_size_before_first_capture(local_server):
     demo.SESSION.worker.join(5)
     view = client.get("/api/state").json()
     assert (view["page"]["w"], view["page"]["h"]) == (360, 620)
-    assert demo.SESSION.agent.browser.observations == 2
+    assert demo.SESSION.agent.browser.observations == 1  # the new tab's first observation starts the task
     assert not demo.SESSION.agent.browser.resizes
 
 

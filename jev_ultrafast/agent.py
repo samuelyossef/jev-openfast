@@ -9,15 +9,33 @@ from .model import MissingValue, action_space, choose, field_context, field_text
 from .questions import MAX_STEPS
 from .timing import Timings, timed
 
+# ponytail: fixed window; a resumed run (pause, manual control) is older than this and re-checks freshness.
+RECENT_OBSERVATION_S = 0.5
+
+
+def open_blank(viewport=None):
+    """Open the owned tab before the destination is known; Agent(..., browser=...) navigates it."""
+    return Browser("about:blank", viewport=viewport) if viewport is not None else Browser("about:blank")
 
 class Agent:
-    def __init__(self, url, goals, *, record_dir=None, screenshots=False, viewport=None):
+    observed_at = None  # perf_counter of the latest post-action observation
+
+    def __init__(self, url, goals, *, record_dir=None, screenshots=False, viewport=None, browser=None):
         task = "" if goals is None else goals.strip() if isinstance(goals, str) else "\n".join(goals).strip()
         if goals is not None and not task:
             raise ValueError("Supply a task")
         plan = [task] if task else []
         self.pending_text = None
-        self.browser = Browser(url, viewport=viewport) if viewport is not None else Browser(url)
+        if browser is not None:
+            # Opened in advance (on about:blank) while the request helper was still running.
+            self.browser = browser
+            try:
+                browser.navigate(url)
+            except Exception:
+                browser.close()
+                raise
+        else:
+            self.browser = Browser(url, viewport=viewport) if viewport is not None else Browser(url)
         self.timings = getattr(self.browser, "timings", Timings())
         self.browser.timings = self.timings
         self.record_dir = Path(record_dir) if record_dir else None
@@ -49,11 +67,12 @@ class Agent:
             if page.get("screenshot"):
                 (self.record_dir / "000000.jpg").write_bytes(base64.b64decode(page["screenshot"]))
 
-    def start_task(self, goal, conversation=None):
-        """Start another goal in the owned tab, with fresh per-task budgets and caches."""
+    def start_task(self, goal, conversation=None, *, observe=True):
+        """Start another goal in the owned tab, with fresh per-task budgets and caches.
+        observe=False reuses the page this tab was just observed with (a tab opened for this goal)."""
         if not isinstance(goal, str) or not goal.strip():
             raise ValueError("Supply a task")
-        page = self.browser.observe(screenshot=self.screenshots)
+        page = self.browser.observe(screenshot=self.screenshots) if observe else self.state["page"]
         self.pending_text = None
         self.state.update(
             goal=goal.strip(), page=page, decision=None, history=[], status="ready",
@@ -111,7 +130,11 @@ class Agent:
             raise ValueError("Start a demo first")
         if state["started_at"] is None:
             state["started_at"] = time.perf_counter()
-        if not state["browser"].fresh(state["page"]):
+        # The freshness probe costs about as much as an observation. Skip it right after the post-action
+        # observation; mutation guards still run before input, and a stale choice is re-chosen there.
+        recent = self.observed_at is not None and time.perf_counter() - self.observed_at < RECENT_OBSERVATION_S
+        self.observed_at = None
+        if not recent and not state["browser"].fresh(state["page"]):
             state["page"] = state["browser"].observe(screenshot=self.screenshots)
         state["decision"] = None
         if state["status"] in {"done", "blocked"}:
@@ -204,6 +227,7 @@ class Agent:
             entry["elapsed_ms"] = state["elapsed_ms"]
         # An interrupted post-action observation must not erase a completed action.
         state["page"] = state["browser"].observe(screenshot=self.screenshots)
+        self.observed_at = time.perf_counter()
         state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
         entry.update(
             page_changed=state["page"]["fingerprint"] != page["fingerprint"],

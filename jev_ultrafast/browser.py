@@ -34,6 +34,7 @@ def validate_viewport(width, height):
 
 
 class Browser:
+    @timed("startup")
     def __init__(self, url, *, viewport=None):
         width, height = validate_viewport(*(viewport or (1120, 780)))
         ensure_daemon()
