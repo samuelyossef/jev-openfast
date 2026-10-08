@@ -13,6 +13,7 @@ from .secrets_store import load_openrouter_key, openrouter_key_source
 CLIENT = httpx.Client(http2=True, timeout=25)
 DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+KEY_URL = "https://openrouter.ai/api/v1/key"
 
 
 class MissingValue(ValueError):
@@ -27,6 +28,18 @@ def openrouter_key():
     if not key:
         raise ValueError("OPENROUTER_API_KEY is required before a model request.")
     return key
+
+
+def validate_openrouter_key(key):
+    """Ask OpenRouter whether the key is accepted; anything unconfirmed is rejected so no bad key is saved."""
+    try:
+        response = CLIENT.get(KEY_URL, headers={"Authorization": f"Bearer {key}"})
+    except httpx.HTTPError:
+        raise RuntimeError("Não foi possível validar a chave: falha de conexão com a OpenRouter.") from None
+    if response.status_code in {401, 403}:
+        raise ValueError("A OpenRouter recusou esta chave. Confira se ela está correta e ativa.")
+    if response.status_code != 200:
+        raise RuntimeError(f"Não foi possível validar a chave (OpenRouter respondeu {response.status_code}).")
 
 
 def openrouter_key_status():

@@ -67,6 +67,15 @@ async function readJson<T>(url: string, headers?:HeadersInit): Promise<T> {
   return response.json();
 }
 
+// The key is encrypted in the browser with the server's per-process public key (RSA-OAEP / SHA-256).
+async function encryptKey(key: string): Promise<string> {
+  const { public_key } = await readJson<{ public_key: string }>('/api/public-key');
+  const spki = Uint8Array.from(atob(public_key), (char) => char.charCodeAt(0));
+  const publicKey = await crypto.subtle.importKey('spki', spki, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']);
+  const cipher = await crypto.subtle.encrypt('RSA-OAEP', publicKey, new TextEncoder().encode(key));
+  return btoa(String.fromCharCode(...new Uint8Array(cipher)));
+}
+
 async function post(name: string, body: Record<string, unknown>): Promise<Snapshot> {
   const response = await fetch(`/api/${name}`, {
     method: 'POST',
@@ -307,6 +316,19 @@ function ExecutionSidebar({ state }: { state: Snapshot }) {
     </aside>;
 }
 
+function ProviderSettings({ keySource, busy, ready, onSave }: { keySource?: string; busy: boolean; ready: boolean; onSave: (key: string) => Promise<boolean> }) {
+  const { t } = useI18n();
+  const [keyInput, setKeyInput] = useState('');
+  const key = keyInput.trim();
+  return <div className="settings-card"><p className="eyebrow">{t('provider')}</p><h1>OpenRouter</h1>
+    <p>{t('configureKey')}</p>
+    <form onSubmit={async (event) => { event.preventDefault(); if (key && await onSave(key)) setKeyInput(''); }}>
+      <label htmlFor="openrouter-key">{t('openRouterKey')}</label><div className="provider-entry"><input id="openrouter-key" type="password" value={keyInput} maxLength={1024} autoComplete="new-password" onChange={(event) => setKeyInput(event.target.value)} placeholder={t('pasteKey')} required />
+        <button className="primary-button" disabled={busy || !ready || !key}>{t('saveKey')}</button></div>
+    </form><p role="status">{keySource === 'encrypted' ? t('keyEncrypted') : keySource === 'environment' ? t('keyEnvironment') : t('keyMissing')}</p>
+    <small>{t('keyPrivacy')}</small></div>;
+}
+
 function App() {
   const { locale, t } = useI18n();
   const [state, setState] = useState<Snapshot | null>(null);
@@ -345,7 +367,6 @@ function App() {
   const mutationEpoch = useRef(0);
   const [error, setError] = useState('');
   const [theme, setTheme] = useState(() => localStorage.getItem('jev.theme') || 'light');
-  const [keyInput, setKeyInput] = useState('');
   const [settingsTab, setSettingsTab] = useState<'general' | 'model'>('general');
   const thread = useRef<HTMLDivElement>(null);
   const settingsPage = window.location.pathname === '/settings';
@@ -659,13 +680,9 @@ function App() {
         <div className="srow"><span>{t('interfaceLanguage')}</span><LanguageSegment /></div>
         <p className="group">{t('appearance')}</p>
         <div className="srow"><span>{t('darkTheme')}</span><input type="checkbox" className="switch" checked={theme === 'dark'} onChange={(event) => setTheme(event.target.checked ? 'dark' : 'light')} /></div>
-      </> : <div className="settings-card"><p className="eyebrow">{t('provider')}</p><h1>OpenRouter</h1>
-        <p>{t('configureKey')}</p>
-        <form onSubmit={async (event) => { event.preventDefault(); if (!keyInput.trim()) return; if (await perform('settings', { openrouter_api_key: keyInput.trim() })) setKeyInput(''); }}>
-          <label htmlFor="openrouter-key">{t('openRouterKey')}</label><div className="provider-entry"><input id="openrouter-key" type="password" value={keyInput} maxLength={1024} autoComplete="new-password" onChange={(event) => setKeyInput(event.target.value)} placeholder={t('pasteKey')} required />
-            <button className="primary-button" disabled={busy || !state || !keyInput.trim()}>{t('saveKey')}</button></div>
-        </form><p role="status">{state?.openrouter_key_source === 'encrypted' ? t('keyEncrypted') : state?.openrouter_key_source === 'environment' ? t('keyEnvironment') : t('keyMissing')}</p>
-        <small>{t('keyPrivacy')}</small></div>}</section></div></div>
+      </> : <ProviderSettings keySource={state?.openrouter_key_source} busy={busy} ready={Boolean(state)} onSave={async (key) => {
+        try { return await perform('settings', { encrypted_key: await encryptKey(key) }); } catch { setError(t('operationError')); return false; }
+      }} />}</section></div></div>
     </main> : <>
       <main className={`main ${historyOpen ? 'history-main' : 'chat-main'}`}>
         <div className="topbar"><button className="icon-btn topbar-menu" onClick={() => { setSidebarOpen(true); setDetailsOpen(false); }} aria-label={t('openMenu')}><Icon name="panel" /></button>

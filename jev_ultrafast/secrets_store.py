@@ -3,8 +3,18 @@
 import ctypes
 import os
 import sys
+from base64 import b64decode, b64encode
 from ctypes import wintypes
 from pathlib import Path
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+# The browser encrypts the pasted key with this per-process public key, so it never travels in clear text
+# and only this server process can read it. A restart makes the browser fetch the new public key.
+_TRANSPORT_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+_OAEP = padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
 
 KEY_PATH = Path(__file__).resolve().parent.parent / "artifacts" / "openrouter-api-key.dpapi"
 _ENTROPY = b"Jev Ultrafast OpenRouter key v1"
@@ -81,6 +91,18 @@ def _unprotect(value):
         if description:
             kernel32.LocalFree(description)
         del data_buffer, entropy_buffer
+
+
+def transport_public_key():
+    """Base64 SPKI DER, importable by Web Crypto as RSA-OAEP / SHA-256."""
+    return b64encode(_TRANSPORT_KEY.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)).decode()
+
+
+def decrypt_transport_key(value):
+    try:
+        return _TRANSPORT_KEY.decrypt(b64decode(value, validate=True), _OAEP).decode("utf-8")
+    except (TypeError, ValueError):
+        raise ValueError("Não foi possível ler a chave enviada. Recarregue a página e tente novamente.") from None
 
 
 def save_openrouter_key(value):

@@ -15,9 +15,9 @@ from . import __version__
 from .browser import validate_viewport
 from .chat import ChatSession, validate_message, validate_url
 from .conversations import ConversationStore
-from .model import openrouter_key_status
+from .model import openrouter_key_status, validate_openrouter_key
 from .questions import MAX_STEPS
-from .secrets_store import save_openrouter_key
+from .secrets_store import decrypt_transport_key, save_openrouter_key, transport_public_key
 
 ROOT = Path(__file__).parent
 WEB_ROOT = ROOT / "web"
@@ -86,7 +86,9 @@ def command(name, body, owner_token=None):
     if name in {"session", "message"} and ("width" in body or "height" in body):
         viewport = validate_viewport(body.get("width"), body.get("height"))
     if name == "settings":
-        save_openrouter_key(body.get("openrouter_api_key"))
+        key = decrypt_transport_key(body.get("encrypted_key")).strip()
+        validate_openrouter_key(key)
+        save_openrouter_key(key)
     elif name.startswith("manual/"):
         if SESSION is None or body.get("session_id") != SESSION.id:
             raise ValueError("Esta conversa não está mais ativa.")
@@ -203,6 +205,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(404, json.dumps({"error": "Esta prévia não está mais ativa."}))
             preview = session.preview.snapshot(after=query.get("after", [None])[0])
             return self.send(200, json.dumps(preview))
+        if path == "/api/public-key":
+            return self.send(200, json.dumps({"public_key": transport_public_key()}))
         if path == "/api/conversations":
             session = SESSION
             result = {"conversations": STORE.list(), "active_id": session.id if session else None}
