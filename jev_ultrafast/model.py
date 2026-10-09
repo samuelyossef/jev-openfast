@@ -20,6 +20,18 @@ class MissingValue(ValueError):
     """The text helper reported that the goal does not supply the field value."""
 
 
+class InvalidOutput(ValueError):
+    """A model answered, but not with a usable choice or value. Nothing was executed."""
+
+
+def reask_once(call):
+    """Model requests never touch the browser, so one malformed answer is asked again before the task stops."""
+    try:
+        return call()
+    except InvalidOutput:
+        return call()
+
+
 def openrouter_key():
     saved_key = load_openrouter_key()
     if saved_key:
@@ -95,7 +107,7 @@ def validate_choice(answer, ids):
     except (KeyError, TypeError, ValueError):
         valid = False
     if not valid:
-        raise ValueError("Invalid TypeSafe response; no action executed.")
+        raise InvalidOutput("Invalid TypeSafe response; no action executed.")
     return answer
 
 
@@ -133,7 +145,11 @@ def action_space(actions):
     return elements, targets, controls
 
 
-def choose(state, goal, history, *, conversation=None, verification_feedback=None):
+def choose(*args, **kwargs):
+    return reask_once(lambda: _choose(*args, **kwargs))
+
+
+def _choose(state, goal, history, *, conversation=None, verification_feedback=None):
     elements, targets, controls = action_space(state["actions"])
     labels = {
         "CLICK": "Click an element, button, menu option, autocomplete suggestion, or calendar day.",
@@ -194,7 +210,7 @@ def choose(state, goal, history, *, conversation=None, verification_feedback=Non
     result = post_json(DECISIONS_URL, openrouter_key(), body)
     answers = result.get("answers") if isinstance(result, dict) else None
     if not isinstance(answers, dict):
-        raise ValueError("Invalid TypeSafe response; no action executed.")
+        raise InvalidOutput("Invalid TypeSafe response; no action executed.")
     operation_answer = validate_choice(answers.get("operation", {}), operations)
     operation = operation_answer["choice"]
     target = None
@@ -247,6 +263,10 @@ def field_context(goal, action, page, history):
 
 
 def field_text(context):
+    return reask_once(lambda: _field_text(context))
+
+
+def _field_text(context):
     key = openrouter_key()
     model = os.environ.get("TEXT_MODEL", "inception/mercury-2.5")
     reasoning = {"reasoning": {"effort": "low"}}
@@ -293,7 +313,7 @@ def field_text(context):
     except MissingValue:
         raise
     except (ValueError, KeyError, TypeError, IndexError):
-        raise ValueError("Text helper returned no valid field value; nothing typed.") from None
+        raise InvalidOutput("Text helper returned no valid field value; nothing typed.") from None
     return value, {
         "model": model,
         "latency_ms": round((time.perf_counter() - started) * 1000),

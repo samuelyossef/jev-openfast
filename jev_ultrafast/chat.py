@@ -100,6 +100,15 @@ RECONSIDER_BLOCKED = {
 }
 
 
+def frozen(view):
+    """Deep copy of a view. The decision log is shared: entries are never changed after they are appended, and each
+    carries the whole request (page text, element table), so copying them made every publish slower per step."""
+    copied = copy.deepcopy({key: value for key, value in view.items() if key != "decisions"})
+    if "decisions" in view:
+        copied["decisions"] = list(view["decisions"])
+    return copied
+
+
 class ChatSession:
     def __init__(self, url=None, on_change=None, viewport=None):
         self.id = secrets.token_urlsafe(18)
@@ -194,7 +203,7 @@ class ChatSession:
                 decision = source.get("decision")
                 source["decision"] = ({k: decision.get(k) for k in ("choice", "operation", "target")}
                                       if decision else None)
-            view = copy.deepcopy(source)
+            view = frozen(source)
             view["viewport"] = dict(zip(("width", "height"), self.viewport)) if self.viewport else None
         view["preview_revision"] = self.preview.revision
         if not compact and view.get("page"):
@@ -276,7 +285,7 @@ class ChatSession:
             "first_action_ms": first_ms,
         }
         with self.lock:
-            self.view = copy.deepcopy(view)
+            self.view = frozen(view)
         if self.on_change:
             projection = json.dumps((view["messages"], view["chat_status"], view["last_url"]), ensure_ascii=False)
             if projection != self.persisted:

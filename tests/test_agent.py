@@ -768,3 +768,29 @@ def test_follow_tabs_recovers_from_a_popup_that_closed_and_ignores_older_sibling
     with pytest.raises(StalePage):  # a dead session is reported as stale instead of crashing the task
         instance.evaluate("1")
     assert (instance.target, instance.session, instance.tabs()) == ("owned", "s-owned", 1)
+
+
+def test_text_helper_asks_again_once_after_a_malformed_answer(monkeypatch):
+    replies = iter(["Thinking: Zurich", '{"text":"Zurich"}'])
+    post = Mock(side_effect=lambda *_a, **_k: {"choices": [{"message": {"content": next(replies)}}]})
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", post)
+    assert model.field_text({"goal": "Find a flight"})[0] == "Zurich"
+    assert post.call_count == 2
+
+
+def test_decision_asks_again_once_after_an_invalid_choice(monkeypatch):
+    replies = iter([True, False])
+
+    def post(_url, _key, body):
+        invalid = next(replies)
+        targets = list(body["questions"]["click_target"]["criteria"])
+        return {"model": "test", "answers": {
+            "operation": choice(body["questions"]["operation"]["criteria"], "CLICK"),
+            "type_text_target": choice(["1"], "1"),
+            "click_target": choice([*targets, "999"] if invalid else targets, "999" if invalid else targets[0]),
+        }}
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", post)
+    assert model.choose(page(), "Find a book", [])["operation"] == "CLICK"
