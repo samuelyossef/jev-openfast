@@ -43,7 +43,11 @@ is `TYPE_TEXT`.
   appears in the chat. **Take control** gives you the page (mouse, keyboard, text); **Continue with Jev**
   resumes the task automatically. Passwords and codes you type are hidden from the assistant, and no model
   calls happen while you drive.
-- **Browse freely.** While no task is running you can scroll, click and follow links directly in the preview.
+- **Browse freely.** While no task is running you can scroll, click and follow links directly in the preview, or use
+  its address bar with Back, Forward and Reload. Under manual control the preview is a live stream (about
+  8 frames per second in headless Chrome) instead of periodic screenshots.
+- **New tabs.** JEV follows a page its tab opens (a `target=_blank` link, `window.open`, a sign-in pop-up) and
+  returns to the opener when the pop-up closes. Text you type under manual control is hidden in every owned tab.
 - **Live preview** of the browser with execution details: operation, target, confidence, action history and
   per-stage timings. Pause, resume and read-only recheck are always available.
 - **History.** Recent conversations in the sidebar; **Search** opens the full list with rename, archive and
@@ -221,8 +225,10 @@ Tests are offline and never call paid APIs. The version lives in `pyproject.toml
 ## Limits
 
 The DOM reader handles common HTML and ARIA controls, not the full accessible-name specification. Shadow roots,
-frames, canvas, uploads, pop-up tabs and nested scrolling are outside automatic mode; manual control can operate
-frames, canvas and keyboard widgets. Owned tabs share the Chrome profile in use. Timing and benchmark numbers
+frames, canvas, uploads and nested scrolling are outside automatic mode; manual control can operate
+frames, canvas and keyboard widgets. Owned tabs share the Chrome profile in use, so a login done once (for example
+through the **Take control** card) carries over to later tabs and conversations. A new-tab link that JEV clicks
+is opened directly at its address, so the page's own click handler does not run. Timing and benchmark numbers
 are in [docs/performance.md](docs/performance.md) and [docs/chat-performance.md](docs/chat-performance.md);
 they come from a few runs of specific tasks and are not a general reliability benchmark.
 

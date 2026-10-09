@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from browser_harness.admin import ensure_daemon
@@ -276,11 +277,25 @@ class Browser:
             self.call("Page.startScreencast", format="jpeg", quality=72, everyNthFrame=1)
             self.screencasting, self.frame, self.frames = self.session, None, getattr(self, "frames", 0)
         # ponytail: drain_events() empties the daemon's shared queue; the screencast is its only reader in Jev.
+        acks = []
         for event in drain_events():
             if event["method"] == "Page.screencastFrame" and event.get("session_id") == self.session:
-                self.call("Page.screencastFrameAck", sessionId=event["params"]["sessionId"])
+                acks.append(event["params"]["sessionId"])
                 self.frame, self.frames = event["params"]["data"], self.frames + 1
+        if acks:
+            # Each acknowledgement is a ~70 ms round trip and Chrome only needs it eventually: never wait for it.
+            if getattr(self, "acker", None) is None:
+                self.acker = ThreadPoolExecutor(max_workers=1)
+            self.acker.submit(self._ack, self.session, acks)
         return self.frame, self.frames
+
+    @staticmethod
+    def _ack(session, ids):
+        for number in ids:
+            try:
+                cdp("Page.screencastFrameAck", session_id=session, sessionId=number, _response_timeout=5)
+            except (RuntimeError, TimeoutError):
+                return  # the tab closed or stopped streaming
 
     def stop_screencast(self):
         session, self.screencasting, self.frame = getattr(self, "screencasting", None), None, None
