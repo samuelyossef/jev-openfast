@@ -318,3 +318,23 @@ def test_navigation_during_prediction_reobserves_without_action(runner):
     assert runner.state["status"] == "ready"
     assert runner.state["decision"] is None
     runner.state["browser"].act.assert_not_called()
+
+
+def test_stale_page_is_not_a_validation_or_settle_error():
+    # ValueError would hit the demo's 400 validation handler; RuntimeError is swallowed in Browser.act.
+    assert not issubclass(StalePage, (ValueError, RuntimeError))
+
+
+def test_demo_reports_stale_page_as_409(monkeypatch):
+    import io
+
+    import jev_ultrafast.demo as demo
+
+    monkeypatch.setattr(demo, "command", Mock(side_effect=StalePage("changed")))
+    h = demo.Handler.__new__(demo.Handler)
+    body = b"{}"
+    h.headers = {"Host": f"127.0.0.1:{demo.PORT}", "X-Demo-Token": demo.TOKEN, "Content-Length": str(len(body))}
+    h.path, h.rfile, h.send = "/api/act", io.BytesIO(body), Mock()
+    h.do_POST()
+    status, content = h.send.call_args.args
+    assert status == 409 and '"stale": true' in content

@@ -13,7 +13,7 @@ from browser_harness.helpers import cdp
 READ_STATE = Path(__file__).with_name("snapshot.js").read_text()
 MARKER = f"(() => {{ const state={READ_STATE}; return state?.marker ?? null; }})()"
 
-class StalePage(ValueError):
+class StalePage(Exception):
     """A decision no longer refers to the observed page."""
 
 
