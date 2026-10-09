@@ -678,6 +678,7 @@ function App() {
         {activeConversations.slice(0, 30).map((item) => <div className="sidebar-conversation" key={item.id}><button className={`convo ${item.id === state?.session_id ? 'active' : ''}`} onClick={() => selectChat(item.id)} disabled={disabledSession} title={item.title}>
           <span className="convo-title">{displayTitle(item.title)}</span></button>{conversationActions(item)}</div>)}
       </div>
+      <div className="sb-brand">JEV OpenFast Browser</div>
       <div className="sb-foot" ref={accountMenu}>
         <button className="account-trigger" type="button" aria-haspopup="menu" aria-expanded={accountMenuOpen} aria-label={t('localMenu')}
           onClick={() => setAccountMenuOpen((value) => !value)}><span className="avatar">J</span><span className="sb-who"><span className="who">{t('localJev')}</span><span className="plan">{state?.openrouter_key_source === 'missing' ? t('keyMissingShort') : 'OpenRouter'}</span></span><span className="account-chevron" aria-hidden="true">⌄</span></button>
@@ -709,7 +710,7 @@ function App() {
     </main> : <>
       <main className={`main ${historyOpen ? 'history-main' : 'chat-main'}`}>
         <div className="topbar"><button className="icon-btn topbar-menu" onClick={() => { setSidebarOpen(true); setDetailsOpen(false); }} aria-label={t('openMenu')}><Icon name="panel" /></button>
-          <span className="crumbs"><b>{historyOpen ? t('history') : currentTitle}</b></span><span className="top-right"><span className="top-pill"><span className="dot" /> JEV OpenFast Browser</span></span></div>
+          <span className="crumbs"><b>{historyOpen ? t('history') : currentTitle}</b></span><span className="top-right"><span className="top-pill"><span className="dot" /> {t('online')}</span></span></div>
         {(error || state?.storage_error) && <div className="error-banner" role="alert">{error || state?.storage_error}</div>}
         {historyOpen ? <div className="history-view"><div className="history-heading"><h1>{t('history')}</h1><button onClick={() => setHistoryOpen(false)}>{t('backToChat')}</button></div>
           <label className="search-field"><Icon name="search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchConversations')} aria-label={t('searchConversations')} autoFocus /></label>

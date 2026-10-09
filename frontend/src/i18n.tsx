@@ -19,7 +19,7 @@ const pt = {
   browserPreview: 'Prévia do navegador', resizePreview: 'Ajustar largura da prévia', pageImage: 'Página atual controlada por Jev',
   pageOpen: 'Página aberta.', manyPossibilities: 'Uma página. Muitas possibilidades.', imageUnavailable: 'A imagem da página não está disponível neste momento.',
   previousTabClosed: 'A aba anterior foi encerrada. O próximo pedido abrirá uma nova página.', pageWillAppear: 'A página controlada pelo assistente aparecerá aqui.',
-  noSite: 'Nenhum site aberto', goBack: 'Voltar', goForward: 'Avançar', reload: 'Recarregar', address: 'Endereço da página', waitingSite: 'Aguardando um site', executionDetails: 'Detalhes da execução', closeDetails: 'Fechar detalhes da execução', openDetails: 'Abrir detalhes da execução',
+  noSite: 'Nenhum site aberto', online: 'Online', goBack: 'Voltar', goForward: 'Avançar', reload: 'Recarregar', address: 'Endereço da página', waitingSite: 'Aguardando um site', executionDetails: 'Detalhes da execução', closeDetails: 'Fechar detalhes da execução', openDetails: 'Abrir detalhes da execução',
   time: 'Tempo', requestTime: 'Tempo do pedido', total: 'Total', approvalWait: 'Espera por confirmação', firstAction: 'Primeira ação', stageTimes: 'Tempos por etapa', overlap: 'Etapas em paralelo podem se sobrepor.',
   currentExecution: 'Execução atual', operation: 'Operação', activity: 'Atividade', waitingTask: 'Aguardando uma tarefa', describeAction: 'Descreva o que deseja fazer.', previousDetailsUnavailable: 'Os detalhes da execução anterior não estão disponíveis após a retomada.',
   selectedTarget: 'Alvo escolhido', confidence: 'Confiança', actionsHistory: 'Histórico de ações', pageChanged: 'Página alterada', noChange: 'Sem alteração', resultUnobserved: 'Resultado não observado',

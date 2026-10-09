@@ -547,6 +547,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .convo { border: 0; background: transparent; width: 100%; text-align: left; }
 .convo:disabled { opacity: .5; }
 .sb-foot { margin-top: auto; }
+.sb-brand { padding: 8px 14px; font: 11px "JetBrains Mono", monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar.is-collapsed .sb-brand { display: none; }
 .sb-who { flex: 1; min-width: 0; }
 .sidebar.menu-open { overflow: visible; }
 .sb-foot { position: relative; }
@@ -803,6 +805,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .jev-app[data-sidebar="open"] .sidebar { transform: translateX(0); }
   .sidebar.is-collapsed { width: 280px; }
   .sidebar.is-collapsed .brand, .sidebar.is-collapsed .brand-name, .sidebar.is-collapsed .sb-label, .sidebar.is-collapsed .sb-list, .sidebar.is-collapsed .sb-who { display: flex; }
+  .sidebar.is-collapsed .sb-brand { display: block; }
   .sidebar.is-collapsed .sb-act { justify-content: flex-start; padding: 7px 9px; }
   .sidebar.is-collapsed .sb-actions { padding: 8px 10px 6px; }
   .sidebar.is-collapsed .sb-foot { justify-content: flex-start; padding: 9px 10px; }
