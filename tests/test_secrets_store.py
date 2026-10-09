@@ -66,21 +66,21 @@ def test_settings_command_rejects_plaintext_or_garbage_key(monkeypatch):
 def test_validate_openrouter_key_status(monkeypatch, status, error, match):
     seen = {}
 
-    def get(url, headers):
-        seen.update(url=url, auth=headers["Authorization"])
+    def get(url, headers, timeout):
+        seen.update(url=url, auth=headers["Authorization"], timeout=timeout)
         return httpx.Response(status)
 
     monkeypatch.setattr(model.CLIENT, "get", get)
     with pytest.raises(error, match=match):
         model.validate_openrouter_key("sk-or-v1-x")
-    assert seen == {"url": model.KEY_URL, "auth": "Bearer sk-or-v1-x"}
+    assert seen == {"url": model.KEY_URL, "auth": "Bearer sk-or-v1-x", "timeout": 8}
 
 
 def test_validate_openrouter_key_accepts_200_and_reports_connection_failure(monkeypatch):
-    monkeypatch.setattr(model.CLIENT, "get", lambda url, headers: httpx.Response(200))
+    monkeypatch.setattr(model.CLIENT, "get", lambda url, headers, timeout: httpx.Response(200))
     model.validate_openrouter_key("sk-or-v1-x")
 
-    def offline(url, headers):
+    def offline(url, headers, timeout):
         raise httpx.ConnectError("offline")
 
     monkeypatch.setattr(model.CLIENT, "get", offline)

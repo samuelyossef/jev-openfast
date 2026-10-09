@@ -1,6 +1,7 @@
 """Offline contracts for a dynamic operation/target policy. No paid APIs."""
 
 import json
+import threading
 import time
 from copy import deepcopy
 from datetime import date
@@ -465,6 +466,7 @@ def test_follow_tabs_switches_to_owned_popups_and_returns_when_they_close(monkey
     monkeypatch.setattr(browser, "cdp", cdp)
     instance = browser.Browser.__new__(browser.Browser)
     instance.target, instance.session, instance.openers, instance.viewport = "owned", "session-owned", [], (800, 600)
+    instance.popups, instance.tab_lock = set(), threading.RLock()
     assert not instance.follow_tabs()  # an unrelated tab or a frame is never followed
 
     pages.append({"targetId": "popup", "type": "page", "openerId": "owned"})
@@ -503,6 +505,7 @@ def test_new_tab_link_opens_an_owned_tab_without_a_held_click(monkeypatch):
     monkeypatch.setattr(browser, "cdp", cdp)
     instance = browser.Browser.__new__(browser.Browser)
     instance.target, instance.session, instance.openers, instance.viewport = "owned", "s", [], (800, 600)
+    instance.popups, instance.tab_lock = set(), threading.RLock()
     instance.fresh = Mock(return_value=True)
     instance._wait_loaded = Mock()
     instance.act({"id": "e1", "kind": "click", "node": 1}, page())
@@ -734,3 +737,34 @@ def test_persistent_rate_limit_explains_itself_without_hanging(monkeypatch):
     with pytest.raises(RuntimeError, match="HTTP 429.*nenhuma ação foi executada"):
         model.post_json("https://x", "k", {})
     assert len(sleeps) == model.ATTEMPTS - 1 and max(sleeps) == 10.0
+
+
+def test_follow_tabs_recovers_from_a_popup_that_closed_and_ignores_older_siblings(monkeypatch):
+    import jev_ultrafast.browser as browser
+
+    pages = [{"targetId": "owned", "type": "page"}, {"targetId": "p1", "type": "page", "openerId": "owned"},
+             {"targetId": "p2", "type": "page", "openerId": "owned"}]
+    closed = set()  # sessions whose tab is gone
+
+    def cdp(method, **params):
+        if params.get("session_id") in closed:
+            raise RuntimeError("Session with given id not found.")
+        if method == "Target.getTargets":
+            return {"targetInfos": [dict(page) for page in pages]}
+        if method == "Target.attachToTarget":
+            return {"sessionId": f"s-{params['targetId']}"}
+        return {}
+
+    monkeypatch.setattr(browser, "cdp", cdp)
+    instance = browser.Browser.__new__(browser.Browser)
+    instance.target, instance.session, instance.openers, instance.viewport = "owned", "s-owned", [], (800, 600)
+    instance.popups, instance.tab_lock = set(), threading.RLock()
+
+    assert instance.follow_tabs() and instance.target == "p2"  # two pop-ups from one click: the newest wins
+    assert not instance.follow_tabs() and instance.target == "p2"  # the older sibling never takes the tab back
+
+    pages[:] = [page for page in pages if page["targetId"] == "owned"]  # both pop-ups closed on their own
+    closed.add("s-p2")
+    with pytest.raises(StalePage):  # a dead session is reported as stale instead of crashing the task
+        instance.evaluate("1")
+    assert (instance.target, instance.session, instance.tabs()) == ("owned", "s-owned", 1)

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -22,10 +23,20 @@ class StalePage(ValueError):
     """A decision no longer refers to the observed page."""
 
 
+class NoHistory(ValueError):
+    """Back or Forward with no page in that direction; nothing was navigated."""
+
+
 def navigating(error):
     """CDP reports a document swap mid-evaluation as a protocol error, not a JS exception."""
     message = str(error).lower()
     return "context" in message or "navigat" in message
+
+
+def session_lost(error):
+    """The tab behind a CDP session closed (a pop-up that closed itself)."""
+    message = str(error).lower()
+    return "session with given id not found" in message or "target closed" in message
 
 
 def validate_viewport(width, height):
@@ -41,6 +52,8 @@ class Browser:
         ensure_daemon()
         self.target = None
         self.openers = []  # (target, session) of owned tabs below the active one, most recent last
+        self.popups = set()  # pages our tabs opened that were already followed or skipped
+        self.tab_lock = threading.RLock()  # the preview worker and the input path both follow tabs
         try:
             self.target = cdp(
                 "Target.createTarget", url="about:blank",
@@ -68,23 +81,28 @@ class Browser:
     def follow_tabs(self):
         """Follow a page an owned tab opened (target=_blank, window.open, sign-in pop-ups) and return to
         its opener when it closes. Returns True when the active tab changed."""
-        pages = {info["targetId"]: info for info in cdp("Target.getTargets", _response_timeout=15)["targetInfos"]
-                 if info["type"] == "page"}
-        changed = False
-        while self.openers and self.target not in pages:
-            self.target, self.session = self.openers.pop()
-            changed = True
-        owned = {target for target, _ in self.openers} | {self.target}
-        opened = [target for target, info in pages.items() if info.get("openerId") in owned and target not in owned]
-        if opened:
-            session = cdp("Target.attachToTarget", targetId=opened[-1], flatten=True, _response_timeout=15)
-            self.openers.append((self.target, self.session))
-            self.target, self.session = opened[-1], session["sessionId"]
-            # ponytail: secrets typed earlier in another tab are not copied (Python never keeps them, and a
-            # page-readable export would leak them); text typed from now on is remembered in every owned tab.
-            self._setup_session()
-            changed = True
-        return changed
+        with self.tab_lock:
+            pages = {info["targetId"]: info for info in cdp("Target.getTargets", _response_timeout=15)["targetInfos"]
+                     if info["type"] == "page"}
+            changed = False
+            while self.openers and self.target not in pages:
+                self.target, self.session = self.openers.pop()
+                changed = True
+            owned = {target for target, _ in self.openers} | {self.target}
+            # Only pages not seen before: a pop-up already followed or skipped must not take the tab back later.
+            opened = [target for target, info in pages.items()
+                      if info.get("openerId") in owned and target not in owned and target not in self.popups]
+            self.popups.update(opened)
+            self.popups &= set(pages)  # forget pages that closed
+            if opened:
+                session = cdp("Target.attachToTarget", targetId=opened[-1], flatten=True, _response_timeout=15)
+                self.openers.append((self.target, self.session))
+                self.target, self.session = opened[-1], session["sessionId"]
+                # ponytail: secrets typed earlier in another tab are not copied (Python never keeps them, and a
+                # page-readable export would leak them); text typed from now on is remembered in every owned tab.
+                self._setup_session()
+                changed = True
+            return changed
 
     def tabs(self):
         return len(self.openers) + 1
@@ -113,7 +131,7 @@ class Browser:
         history = self.call("Page.getNavigationHistory")
         index = history["currentIndex"] + step
         if not 0 <= index < len(history["entries"]):
-            raise ValueError("Não há página para " + ("voltar." if step < 0 else "avançar."))
+            raise NoHistory("Não há página para " + ("voltar." if step < 0 else "avançar."))
         entry = history["entries"][index]
         self.call("Page.navigateToHistoryEntry", entryId=entry["id"])
         # A cached (back/forward) page keeps its timeOrigin, so wait for the entry's URL instead.
@@ -141,6 +159,9 @@ class Browser:
         try:
             response = self.call("Runtime.evaluate", expression=expression, returnByValue=True)
         except RuntimeError as error:
+            if session_lost(error):
+                self.follow_tabs()  # back to the opener of the pop-up that just closed
+                raise StalePage("Tab closed; observe the page again") from None
             if navigating(error):
                 raise StalePage("Document changed during evaluation") from None
             raise
@@ -191,6 +212,10 @@ class Browser:
                 return browser_operation(
                     {"operation": "observe", "session": self.session, "screenshot": screenshot}
                 )
+            except RuntimeError as error:
+                if not session_lost(error):
+                    raise
+                self.follow_tabs()
             except StalePage:
                 if time.monotonic() >= deadline:
                     raise StalePage("Page did not settle") from None
@@ -225,11 +250,25 @@ class Browser:
         """Open an observed new-tab link the way the click would, as an owned tab on top of this one."""
         target = cdp("Target.createTarget", url="about:blank",
                      background=os.environ.get("JEV_HEADLESS_BROWSER") != "1", _response_timeout=15)["targetId"]
-        session = cdp("Target.attachToTarget", targetId=target, flatten=True, _response_timeout=15)["sessionId"]
-        self.openers.append((self.target, self.session))
-        self.target, self.session = target, session
-        self._setup_session()  # privacy before the document loads, unlike a tab Chrome opened itself
-        self.navigate(url)
+        with self.tab_lock:
+            below = (self.target, self.session)
+            try:
+                session = cdp("Target.attachToTarget", targetId=target, flatten=True, _response_timeout=15)["sessionId"]
+                self.openers.append(below)
+                self.target, self.session = target, session
+                self.popups.add(target)
+                self._setup_session()  # privacy before the document loads, unlike a tab Chrome opened itself
+                self.navigate(url)
+            except Exception:
+                # A download link or a failed navigation: leave the opener active, as if the click never happened.
+                if self.openers and self.openers[-1] == below:
+                    self.openers.pop()
+                self.target, self.session = below
+                try:
+                    cdp("Target.closeTarget", targetId=target, _response_timeout=15)
+                except (RuntimeError, TimeoutError):
+                    pass
+                raise
 
     @timed("capture")
     def capture(self):
@@ -272,21 +311,23 @@ class Browser:
     def screencast(self):
         """(frame, number) for the active tab: Chrome pushes a JPEG whenever the page repaints, which is smoother
         and cheaper than polling Page.captureScreenshot. The number changes only when a new frame arrived."""
-        if getattr(self, "screencasting", None) != self.session:
+        session = self.session  # one read: a tab switch on another thread must not split start and bookkeeping
+        if getattr(self, "screencasting", None) != session:
             self.stop_screencast()
-            self.call("Page.startScreencast", format="jpeg", quality=72, everyNthFrame=1)
-            self.screencasting, self.frame, self.frames = self.session, None, getattr(self, "frames", 0)
+            cdp("Page.startScreencast", session_id=session, _response_timeout=15,
+                format="jpeg", quality=72, everyNthFrame=1)
+            self.screencasting, self.frame, self.frames = session, None, getattr(self, "frames", 0)
         # ponytail: drain_events() empties the daemon's shared queue; the screencast is its only reader in Jev.
         acks = []
         for event in drain_events():
-            if event["method"] == "Page.screencastFrame" and event.get("session_id") == self.session:
+            if event["method"] == "Page.screencastFrame" and event.get("session_id") == session:
                 acks.append(event["params"]["sessionId"])
                 self.frame, self.frames = event["params"]["data"], self.frames + 1
         if acks:
             # Each acknowledgement is a ~70 ms round trip and Chrome only needs it eventually: never wait for it.
             if getattr(self, "acker", None) is None:
                 self.acker = ThreadPoolExecutor(max_workers=1)
-            self.acker.submit(self._ack, self.session, acks)
+            self.acker.submit(self._ack, session, acks)
         return self.frame, self.frames
 
     @staticmethod
@@ -294,8 +335,11 @@ class Browser:
         for number in ids:
             try:
                 cdp("Page.screencastFrameAck", session_id=session, sessionId=number, _response_timeout=5)
-            except (RuntimeError, TimeoutError):
-                return  # the tab closed or stopped streaming
+            except RuntimeError as error:
+                if session_lost(error):
+                    return  # the tab closed
+            except TimeoutError:
+                continue  # one slow acknowledgement must not stall the rest of the batch
 
     def stop_screencast(self):
         session, self.screencasting, self.frame = getattr(self, "screencasting", None), None, None
@@ -316,6 +360,14 @@ class Browser:
 
     def manual_mode(self, active):
         self.evaluate(f"window.__jevPrivacy.manual={json.dumps(active)}")
+        with self.tab_lock:
+            below = list(self.openers)
+        for _, session in below:  # a tab we left must not stay in manual mode (its typing would be redacted)
+            try:
+                cdp("Runtime.evaluate", session_id=session, _response_timeout=15,
+                    expression=f"window.__jevPrivacy&&(window.__jevPrivacy.manual={json.dumps(active)})")
+            except (RuntimeError, TimeoutError):
+                pass
 
     def protect_manual_text(self, text, group):
         # Chrome retains the redaction data across navigation; Python retains no values.
@@ -325,13 +377,21 @@ class Browser:
 
     def _remember_everywhere(self, source):
         """Every owned tab redacts text typed in any of them, now and after it navigates."""
-        for _, session in [*self.openers, (self.target, self.session)]:
-            cdp("Page.addScriptToEvaluateOnNewDocument", session_id=session, source=source, _response_timeout=15)
-            if session != self.session:
-                try:
+        with self.tab_lock:
+            tabs = [*self.openers, (self.target, self.session)]
+        for _, session in tabs:
+            active = session == self.session
+            try:
+                cdp("Page.addScriptToEvaluateOnNewDocument", session_id=session, source=source, _response_timeout=15)
+                if not active:
                     cdp("Runtime.evaluate", session_id=session, expression=source, _response_timeout=15)
-                except RuntimeError:
-                    pass  # that tab is navigating; the registered script covers its next document
+            except RuntimeError as error:
+                if active:
+                    raise
+                if session_lost(error):  # a middle tab closed while another popup was on top of it
+                    with self.tab_lock:
+                        self.openers = [entry for entry in self.openers if entry[1] != session]
+                # otherwise that tab is navigating; the registered script covers its next document
 
     def manual_event(self, event, group):
         kind = event["type"]
@@ -413,7 +473,7 @@ def browser_operation(request):
               }
               // A no-opener link to a new tab: headless Chrome holds the click for seconds while it opens.
               const tab=action.kind==='click' && e.tagName==='A' && /^https?:/.test(e.href) && e.target &&
-                !['_self','_parent','_top'].includes(e.target.toLowerCase()) && !/opener/i.test(e.rel);
+                !['_self','_parent','_top'].includes(e.target.toLowerCase()) && !/(^|\\s)opener(\\s|$)/i.test(e.rel);
               return {x,y,open:tab ? e.href : null};
             })(""" + json.dumps(action) + ")")
             if target is None:

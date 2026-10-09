@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 from . import assistant
 from .agent import Agent, open_blank
-from .browser import StalePage, validate_viewport
+from .browser import NoHistory, StalePage, validate_viewport
 from .manual import Manual
 from .model import MissingValue
 from .preview import Preview
@@ -28,6 +28,14 @@ def validate_locale(value):
     if value not in LANGUAGES:
         raise ValueError("Idioma não suportado.")
     return value
+
+
+def validate_navigation(body):
+    """(action, url) of an address-bar request, validated before anything is created or recorded."""
+    action = body.get("action")
+    if action not in {"url", "back", "forward", "reload"}:
+        raise ValueError("Navegação desconhecida.")
+    return action, validate_url(body.get("url")) if action == "url" else None
 
 
 def validate_url(value):
@@ -557,6 +565,12 @@ class ChatSession:
             try:
                 self.agent.command("predict")
                 decision, page = self.agent.state["decision"], self.agent.state["page"]
+                if decision["choice"] != "BLOCKED":
+                    # The nudge applied to one decision only; it must not bias the rest of the turn.
+                    feedback = self.agent.state.get("verification_feedback") or []
+                    if RECONSIDER_BLOCKED in feedback:
+                        self.agent.state["verification_feedback"] = [
+                            item for item in feedback if item != RECONSIDER_BLOCKED] or None
                 if self.pause_requested.is_set():
                     self._paused()
                     return
@@ -745,10 +759,7 @@ class ChatSession:
     def navigate_user(self, body):
         """The preview's address bar and Back/Forward/Reload, between tasks. The user is the one acting."""
         self._check_idle()
-        action = body.get("action")
-        if action not in {"url", "back", "forward", "reload"}:
-            raise ValueError("Navegação desconhecida.")
-        url = validate_url(body.get("url")) if action == "url" else None
+        action, url = validate_navigation(body)
         if self.agent is None and action != "url":
             raise ValueError("Nenhuma página aberta para navegar.")
         entry = {"turn_id": self.turn_id, "url": url or action, "status": "requested", "source": "user"}
@@ -758,6 +769,7 @@ class ChatSession:
         self._launch(self._navigate_user, action, url, entry)
 
     def _navigate_user(self, action, url, entry):
+        refresh = False
         try:
             if self.agent is None:
                 self.agent = Agent(url, None, screenshots=False, viewport=self.viewport)
@@ -766,16 +778,24 @@ class ChatSession:
                 browser = self.agent.browser
                 {"url": lambda: browser.navigate(url), "reload": browser.reload,
                  "back": lambda: browser.history_step(-1), "forward": lambda: browser.history_step(1)}[action]()
-                self.agent.state["page"] = browser.observe(screenshot=False)
-        except ValueError as error:  # nothing to go back/forward to: the page did not change
+                refresh = True
+        except NoHistory as error:  # nothing to go back/forward to: the page did not change
             entry["status"] = "not_executed"
             self.progress = str(error)
-        except Exception:
+        except Exception as error:
+            # Not a task failure: the conversation's last result stays as it was. The navigation may have
+            # happened (a net error page, a slow load), so it is recorded as uncertain and never replayed.
             entry["status"] = "uncertain"
-            raise
+            self.progress = f"Não foi possível abrir a página: {str(error).rstrip('.')}."
+            refresh = True
         else:
             entry["status"] = "opened"
             self.progress = "Página aberta. Envie uma tarefa ou uma pergunta."
+        if refresh:
+            try:  # only refreshes what the preview shows; it cannot undo a navigation that already happened
+                self.agent.state["page"] = self.agent.browser.observe(screenshot=False)
+            except Exception:
+                pass  # the next task observes again
         self._publish()
 
     def recheck(self):

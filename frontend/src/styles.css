@@ -627,7 +627,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .address-bar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; }
 .address-bar .preview-url { flex: 1; height: 26px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; }
 .address-bar .preview-url:hover:not(:disabled) { border-color: var(--border); }
-.address-bar .preview-url:focus { outline: none; border-color: var(--border-strong); background: var(--surface); color: var(--ink); }
+.address-bar .preview-url:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; background: var(--surface); color: var(--ink); }
 .preview-head .nav-btn { flex: 0 0 auto; width: 26px; height: 26px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 14px; line-height: 1; }
 .preview-head .nav-btn:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
 .preview-head .nav-btn:disabled { opacity: .4; }

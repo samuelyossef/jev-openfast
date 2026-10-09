@@ -32,8 +32,10 @@ def openrouter_key():
 
 def validate_openrouter_key(key):
     """Ask OpenRouter whether the key is accepted; anything unconfirmed is rejected so no bad key is saved."""
+    if not key.isascii():
+        raise ValueError("A chave OpenRouter tem caracteres inválidos.")
     try:
-        response = CLIENT.get(KEY_URL, headers={"Authorization": f"Bearer {key}"})
+        response = CLIENT.get(KEY_URL, headers={"Authorization": f"Bearer {key}"}, timeout=8)
     except httpx.HTTPError:
         raise RuntimeError("Não foi possível validar a chave: falha de conexão com a OpenRouter.") from None
     if response.status_code in {401, 403}:

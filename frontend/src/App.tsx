@@ -211,21 +211,23 @@ function MessageCard({ message, progress, onRecheck, rechecking, actions }: { me
 function AddressBar({ url, disabled, onNavigate }: { url: string; disabled: boolean; onNavigate: (body: Record<string, string>) => void }) {
   const { t } = useI18n();
   const [address, setAddress] = useState(url);
-  const [editing, setEditing] = useState(false);
-  useEffect(() => { if (!editing) setAddress(url); }, [url, editing]);
+  const editing = useRef(false);
+  // The bar follows the page, except while the user types. A field that becomes disabled never fires blur.
+  useEffect(() => { if (!editing.current) setAddress(url); }, [url]);
+  useEffect(() => { if (disabled) editing.current = false; }, [disabled]);
   return <form className="address-bar" onSubmit={(event) => {
     event.preventDefault();
     const typed = address.trim();
     if (!typed) return;
     onNavigate({ action: 'url', url: /^https?:\/\//i.test(typed) ? typed : `https://${typed}` });
-    setEditing(false);
+    editing.current = false;
     (document.activeElement as HTMLElement | null)?.blur();
   }}>
     <button type="button" className="nav-btn" disabled={disabled || !url} aria-label={t('goBack')} title={t('goBack')} onClick={() => onNavigate({ action: 'back' })}>←</button>
     <button type="button" className="nav-btn" disabled={disabled || !url} aria-label={t('goForward')} title={t('goForward')} onClick={() => onNavigate({ action: 'forward' })}>→</button>
     <button type="button" className="nav-btn" disabled={disabled || !url} aria-label={t('reload')} title={t('reload')} onClick={() => onNavigate({ action: 'reload' })}>↻</button>
     <input className="preview-url" value={address} placeholder={t('noSite')} aria-label={t('address')} disabled={disabled} spellCheck={false}
-      onFocus={(event) => { setEditing(true); event.currentTarget.select(); }} onBlur={() => setEditing(false)}
+      onFocus={(event) => { editing.current = true; event.currentTarget.select(); }} onBlur={() => { editing.current = false; }}
       onChange={(event) => setAddress(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { setAddress(url); event.currentTarget.blur(); } }} />
   </form>;
 }
@@ -710,7 +712,7 @@ function App() {
     </main> : <>
       <main className={`main ${historyOpen ? 'history-main' : 'chat-main'}`}>
         <div className="topbar"><button className="icon-btn topbar-menu" onClick={() => { setSidebarOpen(true); setDetailsOpen(false); }} aria-label={t('openMenu')}><Icon name="panel" /></button>
-          <span className="crumbs"><b>{historyOpen ? t('history') : currentTitle}</b></span><span className="top-right"><span className="top-pill"><span className="dot" /> {t('online')}</span></span></div>
+          <span className="crumbs"><b>{historyOpen ? t('history') : currentTitle}</b></span><span className="top-right"><span className={`top-pill ${error === t('connectionError') ? 'unavailable' : ''}`}><span className="dot" /> {error === t('connectionError') ? t('offline') : t('online')}</span></span></div>
         {(error || state?.storage_error) && <div className="error-banner" role="alert">{error || state?.storage_error}</div>}
         {historyOpen ? <div className="history-view"><div className="history-heading"><h1>{t('history')}</h1><button onClick={() => setHistoryOpen(false)}>{t('backToChat')}</button></div>
           <label className="search-field"><Icon name="search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchConversations')} aria-label={t('searchConversations')} autoFocus /></label>

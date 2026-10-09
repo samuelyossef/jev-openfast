@@ -91,13 +91,16 @@ class Preview:
                 pending, self.pending = self.pending, None
                 manual, manual_browser, revision = self.manual, self.manual_browser, self.revision
             if manual:
-                manual.expire()
-                if manual.status not in {"active", "uncertain"}:
-                    continue
                 last_started = time.monotonic()
                 try:
+                    manual.expire()
+                    if manual.status not in {"active", "uncertain"}:
+                        continue
                     if hasattr(manual_browser, "screencast"):
                         screenshot, number = manual_browser.screencast()
+                        if self.manual is not manual or self.closed.is_set():
+                            manual_browser.stop_screencast()  # manual control ended while the stream started
+                            continue
                         if number == shown and self.cached is not None:
                             # The page did not repaint. A pop-up opened by the last click does not repaint this
                             # tab either, so look for one now and then.
@@ -115,16 +118,17 @@ class Preview:
                         screenshot, number = manual_browser.capture(), None
                         after = manual_browser.manual_context(follow=False)
                     if not screenshot or any(before[k] != after[k] for k in ("document", "w", "h")):
+                        shown = number  # this frame belongs to another document: wait for the next repaint
                         continue
                     with manual.lock:
                         with self.lock:
                             if self.manual is not manual or revision != self.revision or self.closed.is_set():
                                 continue
-                            context = manual.frame(after)
+                            frame_context = manual.frame(after)
                             self.revision += 1
                             shown = number
                             self.cached = {"revision": self.revision, "captured_at": time.time(), "manual": True,
-                                           "context": context,
+                                           "context": frame_context,
                                            "page": {**after, "actions": [], "screenshot": screenshot}, "elements": []}
                             self.error = None
                 except Exception:
@@ -166,5 +170,9 @@ class Preview:
 
     def close(self):
         self.closed.set()
+        with self.lock:
+            browser = self.manual_browser
+        if hasattr(browser, "stop_screencast"):
+            browser.stop_screencast()
         self.invalidate()
         self.wake.set()

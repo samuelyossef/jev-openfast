@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from jev_ultrafast import agent, assistant, chat, demo, model
-from jev_ultrafast.browser import StalePage
+from jev_ultrafast.browser import NoHistory, StalePage
 
 
 class FakeBrowser:
@@ -68,7 +68,7 @@ class FakeBrowser:
 
     def history_step(self, step):
         if step < 0 and not any(kind == "navigate" for kind, _ in self.mutations):
-            raise ValueError("Não há página para voltar.")
+            raise NoHistory("Não há página para voltar.")
         self.mutations.append(("history", step))
         self.page.update(fingerprint=f"history-{len(self.mutations)}")
 
@@ -1240,3 +1240,36 @@ def test_address_bar_navigation_is_recorded_once_and_observed(offline):
         ("https://example.org", "opened", "user"), ("back", "not_executed", "user"),
         ("https://example.com/a", "opened", "user"), ("back", "opened", "user"), ("reload", "opened", "user")]
     assert session.phase != "error"
+
+
+def test_address_bar_failure_keeps_the_last_result_and_a_stable_observe_cannot_undo_a_navigation(offline):
+    session = chat.ChatSession("https://example.org")
+    send(session, "Busque um resultado", "first")
+    result = session.messages[-1]["content"]
+    browser = session.agent.browser
+
+    original = browser.navigate
+    browser.navigate = lambda url: (_ for _ in ()).throw(RuntimeError("Navegação falhou: net::ERR_NAME_NOT_RESOLVED"))
+    session.navigate_user({"action": "url", "url": "https://no-such-host.invalid"})
+    session.worker.join(3)
+    assert session.messages[-1]["content"] == result and session.phase != "error"  # the task's answer is untouched
+    assert session.navigation[-1]["status"] == "uncertain" and "ERR_NAME_NOT_RESOLVED" in session.progress
+
+    browser.navigate = original
+    real_observe = browser.observe
+    browser.observe = lambda screenshot=True: (_ for _ in ()).throw(StalePage("Page did not settle"))
+    session.navigate_user({"action": "url", "url": "https://example.com/b"})
+    session.worker.join(3)
+    browser.observe = real_observe
+    assert ("navigate", "https://example.com/b") in browser.mutations
+    assert session.navigation[-1]["status"] == "opened"  # the page changed; a failed refresh cannot say otherwise
+
+
+def test_invalid_address_bar_request_does_not_leave_an_empty_conversation(offline, monkeypatch):
+    saved = []
+    monkeypatch.setattr(demo, "SESSION", None)
+    monkeypatch.setattr(demo.STORE, "save", lambda state: saved.append(state))
+    for body in ({"action": "url", "url": "javascript:alert(1)"}, {"action": "back"}, {"action": "jump"}):
+        with pytest.raises(ValueError):
+            demo.command("navigate", body)
+    assert demo.SESSION is None and saved == [] and not FakeBrowser.instances

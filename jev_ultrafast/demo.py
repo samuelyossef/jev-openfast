@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import __version__
 from .browser import validate_viewport
-from .chat import ChatSession, validate_message, validate_url
+from .chat import ChatSession, validate_message, validate_navigation, validate_url
 from .conversations import ConversationStore
 from .model import openrouter_key_status, validate_openrouter_key
 from .questions import MAX_STEPS
@@ -157,8 +157,15 @@ def command(name, body, owner_token=None):
     elif name == "navigate" and SESSION is None:
         if body.get("session_id") is not None:
             raise ValueError("Esta conversa não está mais ativa. Recarregue a página.")
+        if validate_navigation(body)[0] != "url":
+            raise ValueError("Nenhuma página aberta para navegar.")
         new_session = ChatSession(on_change=STORE.save, viewport=viewport)
-        new_session.navigate_user(body)  # validates before anything is stored or opened
+        try:
+            new_session.navigate_user(body)
+        except Exception:
+            new_session.close()
+            STORE.delete(new_session.id)  # the empty conversation row it saved is not a conversation
+            raise
         SESSION = new_session
         STORE.select(SESSION.id)
     elif name == "reset":
