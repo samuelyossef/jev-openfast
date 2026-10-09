@@ -122,3 +122,20 @@ def test_transient_capture_timeout_is_retried_without_showing_an_error():
     finally:
         preview.close()
         preview.worker.join(3)
+
+
+def test_page_that_keeps_changing_is_still_shown_without_old_labels():
+    camera, preview = Camera(), Preview("session")
+    camera.released.set()
+    camera.fresh = lambda _page: False  # a ticker or animation: no observation ever matches the live page
+    shown = {**page(), "actions": [{"node": 1, "rect": {"x": 0, "y": 0, "w": 5, "h": 5}, "id": "e1",
+                                    "kind": "click", "label": "Go"}]}
+    try:
+        preview.request(camera, shown)
+        capture = wait_for_capture(preview)
+        assert capture["page"]["screenshot"] == "a-image"
+        assert capture["page"]["actions"] == []  # labels from another moment are never drawn on this image
+        assert preview.snapshot()["error"] is None
+    finally:
+        preview.close()
+        preview.worker.join(3)

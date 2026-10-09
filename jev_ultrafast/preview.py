@@ -142,14 +142,17 @@ class Preview:
             last_started = time.monotonic()
             try:
                 fresh = getattr(browser, "preview_fresh", browser.fresh)
-                if not fresh(page):
-                    continue
+                paired = fresh(page)
                 screenshot = browser.capture()
-                if not screenshot or not fresh(page):
+                if not screenshot:
                     continue
+                # A page that keeps changing (ticker, carousel, animation, ads) never matches its observation.
+                # Dropping the image would leave the preview empty; show it without the old element labels instead.
+                paired = paired and fresh(page)
                 capture = {"revision": revision, "captured_at": time.time(),
-                           "page": {k: page[k] for k in ("url", "title", "w", "h", "actions")},
+                           "page": {k: page[k] for k in ("url", "title", "w", "h")},
                            "elements": action_space(page["actions"])[0]}
+                capture["page"]["actions"] = page["actions"] if paired else []
                 capture["page"]["screenshot"] = screenshot
                 capture["page"]["protected"] = page.get("protected", False)
                 with self.lock:

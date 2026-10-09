@@ -37,7 +37,7 @@ def main():
         requests.append(context)
         calls.append({"kind": kind, "model": "offline", "status": "mocked"})
         if kind == "request":
-            return {"intent": "task", "url": "-", "reply": "Verificando a página local."}
+            return {"intent": "task", "url": "-", "reply": "Verificando a página local.", "task": context["goal"]}
         if kind == "verify":
             return {"satisfied": True, "checks": [{"requirement": "Entrar", "status": "confirmed",
                     "evidence": ["Autenticação concluída"], "reason": "Estado atual observado."}],
