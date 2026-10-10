@@ -949,12 +949,15 @@ def test_unrelated_page_churn_keeps_a_verdict_whose_evidence_is_still_visible(of
     assert len([call for call in view["chat_calls"] if call["kind"] == "verify"]) == 1
 
 
-def test_self_contained_task_drives_agent_and_checks_but_chat_keeps_user_words(offline):
+def test_resolved_task_drives_agent_but_verification_keeps_original_request(offline):
     calls, decisions, config = offline
     config["task"] = "Busque 'Lula presidente do Brasil' na Wikipédia"
     view = send(chat.ChatSession("https://example.org"), "busque na wikipidia")
     assert decisions[0]["goal"] == config["task"]
-    assert [ctx["goal"] for kind, ctx in calls if kind in {"safety", "verify"}] == [config["task"]] * 2
+    assert next(ctx["goal"] for kind, ctx in calls if kind == "safety") == config["task"]
+    verification = next(ctx for kind, ctx in calls if kind == "verify")
+    assert verification["goal"] == "busque na wikipidia"
+    assert verification["resolved_task"] == config["task"]
     assert next(kind == "request" and ctx["goal"] for kind, ctx in calls) == "busque na wikipidia"
     assert view["messages"][0]["content"] == "busque na wikipidia"
     assert view["task"] == config["task"]
@@ -965,6 +968,29 @@ def test_empty_acknowledgment_does_not_stop_the_task(offline):
     view = send(chat.ChatSession("https://example.org"))
     assert view["chat_status"] == "completed"
     assert view["messages"][-1]["verification"]["satisfied"] is True
+
+
+def test_narrowed_routing_cannot_remove_content_requirement_from_verification(offline):
+    calls, _, config = offline
+    config["task"] = "Find the Anthropic channel on YouTube."
+    original = "Find the Anthropic channel on YouTube and a video about the latest model."
+    view = send(chat.ChatSession("https://example.org"), original)
+    verification = next(ctx for kind, ctx in calls if kind == "verify")
+    assert verification["goal"] == original
+    assert verification["resolved_task"] == config["task"]
+    assert view["messages"][-1]["verification"]["checks"][0]["requirement"] == original
+
+
+def test_pasted_report_without_action_preserves_clarification_on_new_session(offline):
+    calls, decisions, config = offline
+    question = "Você quer abrir esse vídeo ou conferir o lançamento?"
+    config["route"] = {"url": "-", "intent": "answer", "reply": question, "task": ""}
+    view = send(chat.ChatSession(), "Found the channel. The latest video shown is a model introduction.")
+    assert view["messages"][-1]["content"] == question
+    assert view["messages"][-1]["kind"] == "clarify"
+    assert view["chat_status"] == "answered"
+    assert not decisions
+    assert [kind for kind, _ in calls] == ["request"]
 
 
 def test_missing_restatement_falls_back_to_the_user_message(offline):

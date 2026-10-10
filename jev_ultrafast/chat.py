@@ -501,7 +501,7 @@ class ChatSession:
                     "current_url": self.agent.state["page"]["url"] if self.agent else None,
                 },
             )
-            # The self-contained restatement drives the agent and the checks; the chat keeps the user's words.
+            # The restatement drives navigation; final verification keeps the original requirements.
             self.task = route["task"].strip() or self.goal  # page questions often come back without a restatement
             if route["intent"] == "task":
                 # References are resolved above; earlier assistant claims must not become task facts.
@@ -524,6 +524,7 @@ class ChatSession:
                     self.navigation[-1]["status"] = "opened"
             elif self.agent is None:
                 self._reply(
+                    route["reply"] if route["intent"] == "answer" and route["reply"].strip() else
                     "Qual site devo abrir? Diga o nome do site ou envie a URL junto com seu pedido.", kind="clarify"
                 )
                 self.phase, self.progress = "answered", "Aguardando o destino."
@@ -860,7 +861,8 @@ class ChatSession:
         self._publish()
 
     def _verify(self):
-        context = {**self._context(), "initial_page": self.initial_page,
+        context = {**self._context(), "goal": self.goal, "resolved_task": self.task,
+                   "initial_page": self.initial_page,
                    "execution_status": self.agent.state["status"], "stop_reason": self.agent.state.get("stop_reason")}
         before = len(self.calls)
         try:
