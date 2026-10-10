@@ -149,6 +149,11 @@ def choose(*args, **kwargs):
     return reask_once(lambda: _choose(*args, **kwargs))
 
 
+def choice_margin(answer):
+    probabilities = sorted(answer["probabilities"].values(), reverse=True)
+    return probabilities[0] - probabilities[1] if len(probabilities) > 1 else 1.0
+
+
 def _choose(state, goal, history, *, conversation=None, verification_feedback=None):
     elements, targets, controls = action_space(state["actions"])
     labels = {
@@ -232,6 +237,8 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
         except ValueError:
             # The reason only words the request for help; it can never cause an action.
             blocked_reason = "OTHER"
+    operation_margin = choice_margin(operation_answer)
+    target_margin = choice_margin(target_answer) if target_answer else None
     return {
         "choice": choice,
         "operation": operation,
@@ -241,6 +248,10 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
         "operation_probabilities": operation_answer["probabilities"],
         "target_probabilities": target_answer["probabilities"] if target_answer else {},
         "target_confidence": target_answer["confidence"] if target_answer else None,
+        "operation_margin": operation_margin,
+        "target_margin": target_margin,
+        # Only numerical ties are gated until task-specific confidence thresholds are calibrated.
+        "ambiguous": operation_margin <= 1e-6 or (target_margin is not None and target_margin <= 1e-6),
         "blocked_reason": blocked_reason,
         "raw_answers": answers,
         "model": result.get("model", "unknown"),

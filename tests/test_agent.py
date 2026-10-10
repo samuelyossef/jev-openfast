@@ -145,6 +145,24 @@ def test_all_heads_are_one_request_and_only_matching_head_executes(monkeypatch):
     assert d["blocked_reason"] is None
     assert calls[0]["model"] == "typesafe/jev-1.13"
     assert isinstance(calls[0]["questions"]["operation"]["instructions"], str)
+    assert not d["ambiguous"] and d["operation_margin"] == d["target_margin"] == 1
+
+
+@pytest.mark.parametrize("tied_head", ["operation", "click_target", "type_text_target"])
+def test_only_selected_head_ties_make_a_decision_ambiguous(monkeypatch, tied_head):
+    def post(_url, _key, body):
+        answers = {name: choice(question["criteria"], next(iter(question["criteria"])))
+                   for name, question in body["questions"].items()}
+        answers["operation"] = choice(body["questions"]["operation"]["criteria"], "CLICK")
+        ids = body["questions"][tied_head]["criteria"]
+        answers[tied_head] = {"choice": next(iter(ids)), "confidence": 0,
+                              "probabilities": {key: 1 / len(ids) for key in ids}}
+        return {"answers": answers}
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", post)
+    result = model.choose(page(), "Find a book", [])
+    assert result["ambiguous"] == (tied_head != "type_text_target")
 
 
 def test_click_cannot_consume_a_text_target(monkeypatch):
@@ -268,6 +286,15 @@ def test_stale_decision_is_consumed_before_any_mutation(runner):
         runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
     runner.state["browser"].act.assert_not_called()
     assert runner.state["decision"] is None
+
+
+def test_ambiguous_action_is_consumed_without_typing_or_mutation(runner):
+    runner.state["decision"]["ambiguous"] = True
+    with pytest.raises(ValueError, match="tied"):
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    runner.state["browser"].act.assert_not_called()
+    assert not runner.state["history"] and not runner.state["text_calls"]
+    assert runner.state["decision"] is None and runner.state["status"] == "ready"
 
 
 def test_text_generation_checks_the_selected_target(runner, monkeypatch):

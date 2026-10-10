@@ -204,6 +204,32 @@ def test_selected_locale_is_forwarded_to_every_chat_helper(offline):
     assert all(context["response_language"] == "Spanish" for _, context in calls)
 
 
+@pytest.mark.parametrize("persistent", [False, True])
+def test_tied_decision_reobserves_once_then_executes_or_pauses(offline, monkeypatch, persistent):
+    session = chat.ChatSession("https://example.org")
+    browser = session.agent.browser
+    original = agent.choose
+    observations = []
+
+    def choose(page, goal, history, **kwargs):
+        observations.append(browser.observations)
+        result = original(page, goal, history, **kwargs)
+        result["ambiguous"] = persistent or len(observations) == 1
+        return result
+
+    monkeypatch.setattr(agent, "choose", choose)
+    view = send(session, "Busque um resultado")
+    assert observations[1] > observations[0]
+    if persistent:
+        assert len(observations) == 2 and not browser.mutations
+        assert view["chat_status"] == "paused" and view["manual"]["status"] == "off"
+        assert view["messages"][-1]["kind"] == "technical_pause"
+        assert not any(kind == "safety" for kind, _ in offline[0])
+    else:
+        assert browser.mutations == [("e1", None)]
+        assert view["messages"][-1]["verification"]["satisfied"]
+
+
 def test_text_and_safety_overlap_without_early_input(offline, monkeypatch):
     session = chat.ChatSession("https://example.org")
     text_started, safety_started = threading.Event(), threading.Event()

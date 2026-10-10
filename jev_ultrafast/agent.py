@@ -175,6 +175,9 @@ class Agent:
             state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
             return
         action = next(a for a in page["actions"] if a["id"] == selected)
+        if decision.get("ambiguous"):
+            state["status"] = "ready"
+            raise ValueError("Operation or target alternatives are tied; observe and choose again")
         if len(state["history"]) >= MAX_STEPS:
             state["status"] = "blocked"
             raise ValueError(f"Stopped at the {MAX_STEPS}-action demo budget")
@@ -195,6 +198,9 @@ class Agent:
             "choice": selected,
             "probability": decision["probabilities"][selected],
             "confidence": decision["confidence"],
+            "target_confidence": decision.get("target_confidence"),
+            "operation_margin": decision.get("operation_margin"),
+            "target_margin": decision.get("target_margin"),
             "latency_ms": decision["latency_ms"],
             "text": text,
             "text_helper": helper["model"] if helper else None,

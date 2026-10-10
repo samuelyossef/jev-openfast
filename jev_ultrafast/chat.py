@@ -665,6 +665,7 @@ class ChatSession:
     def _run(self):
         self.phase = "running"
         stale_attempts = 0
+        ambiguous_attempts = 0
         while self.agent.state["status"] not in {"done", "blocked"}:
             self._apply_viewport()
             if self.pause_requested.is_set():
@@ -693,6 +694,18 @@ class ChatSession:
                 if decision["choice"] == "BLOCKED":
                     if self._resolve_blocker(page):
                         return
+                    continue
+                if decision.get("ambiguous"):
+                    self.agent.state["decision"] = None
+                    self.agent.state["status"] = "ready"
+                    if ambiguous_attempts:
+                        self._paused("As alternativas de operação ou alvo continuam empatadas. "
+                                     "A tarefa foi pausada antes de executar uma ação. "
+                                     "Use Continuar para tentar novamente.",
+                                     kind="technical_pause", pause_code="ambiguous_decision")
+                        return
+                    ambiguous_attempts += 1
+                    self.agent.state["page"] = self.agent.browser.observe(screenshot=False)
                     continue
                 if decision["choice"] not in {"DONE", "BLOCKED"}:
                     action = next(a for a in page["actions"] if a["id"] == decision["choice"])
@@ -748,6 +761,7 @@ class ChatSession:
                 self._publish()
                 self.agent.command("act", {"fingerprint": page["fingerprint"]})
                 stale_attempts = 0
+                ambiguous_attempts = 0
             except MissingValue:
                 if self._resolve_blocker(page, action):
                     return

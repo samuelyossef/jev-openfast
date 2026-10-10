@@ -4,6 +4,8 @@ import threading
 import time
 from contextlib import contextmanager
 from functools import wraps
+from math import ceil
+from statistics import median
 
 
 class Timings:
@@ -55,7 +57,15 @@ class Timings:
             stage = stages.setdefault(event["stage"], {"count": 0, "duration_ms": 0})
             stage["count"] += 1
             stage["duration_ms"] = round(stage["duration_ms"] + event["duration_ms"], 3)
-        return {"stages": totals if totals is not None else stages, **({"events": events} if details else {})}
+        samples = {}
+        if details:
+            for event in events:
+                samples.setdefault(event["stage"], []).append(event["duration_ms"])
+            samples = {name: {"sample_count": len(values), "p50_ms": median(values),
+                              "p95_ms": sorted(values)[ceil(len(values) * 0.95) - 1]}
+                       for name, values in samples.items()}
+        return {"stages": totals if totals is not None else stages,
+                **({"events": events, "latency_samples": samples} if details else {})}
 
 
 def timed(stage):
