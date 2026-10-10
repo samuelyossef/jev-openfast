@@ -5,7 +5,6 @@ import json
 import re
 import threading
 import time
-from http.server import ThreadingHTTPServer
 
 import httpx
 import pytest
@@ -1023,7 +1022,7 @@ def local_server(monkeypatch, offline, tmp_path):
     from jev_ultrafast.conversations import ConversationStore
 
     monkeypatch.setattr(demo, "STORE", ConversationStore(tmp_path / "history.sqlite3"))
-    server = ThreadingHTTPServer(("127.0.0.1", 0), demo.Handler)
+    server = demo.DemoHTTPServer(("127.0.0.1", 0), demo.Handler)
     port = server.server_address[1]
     monkeypatch.setattr(demo, "PORT", port)
     monkeypatch.setattr(demo, "ORIGIN", f"http://127.0.0.1:{port}")
@@ -1038,6 +1037,10 @@ def local_server(monkeypatch, offline, tmp_path):
     server.shutdown()
     server.server_close()
     demo.close_browser()
+
+
+def test_http_server_has_a_burst_tolerant_accept_queue():
+    assert demo.DemoHTTPServer.request_queue_size == 64
 
 
 def test_http_session_chat_restore_and_reject_raw_actions(local_server):

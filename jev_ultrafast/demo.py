@@ -298,6 +298,10 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+class DemoHTTPServer(ThreadingHTTPServer):
+    request_queue_size = 64
+
+
 def restore_selected():
     global SESSION
     selected = STORE.selected()
@@ -318,7 +322,7 @@ def main():
         raise SystemExit(run(PORT))
     restore_selected()
     atexit.register(close_browser)
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    server = DemoHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"JEV OpenFast Browser {__version__}: {ORIGIN}", flush=True)
     try:
         server.serve_forever()
