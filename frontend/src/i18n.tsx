@@ -4,6 +4,9 @@ export const locales = ['pt-BR', 'en', 'es', 'fr'] as const;
 export type Locale = typeof locales[number];
 
 const pt = {
+  cancel: 'Cancelar', save: 'Salvar', saving: 'Salvando…', closeNotice: 'Fechar aviso',
+  conversationArchived: 'Conversa arquivada. Você pode restaurá-la em Arquivadas.',
+  conversationDeleted: 'Conversa excluída.', conversationRestored: 'Conversa restaurada nos Recentes.',
   technicalPause: 'Não encontrei uma ação segura para avançar. A tarefa está pausada; use Continuar para observar a página novamente.', technicalFailure: 'Uma falha técnica pausou a tarefa. Use Continuar para verificar a página e tentar novamente.',
   inputTitle: 'Jev precisa de uma informação', inputHint: 'Responda no chat para continuar a mesma tarefa. Não envie senhas ou códigos.', cancelInput: 'Cancelar pergunta', stateInput: 'Aguardando informação',
   staleVerification: 'Página alterada — verificação desatualizada', version: 'Versão', staleServer: 'O servidor do Jev foi reiniciado. Recarregue a página e use http://127.0.0.1:8766.', appTitle: 'JEV OpenFast Browser · Assistente de navegação', newChat: 'Nova conversa', search: 'Buscar', history: 'Histórico',
@@ -39,6 +42,9 @@ type Messages = { [K in keyof typeof pt]: K extends 'stages' ? Record<string, st
 const dictionaries: Record<Locale, Messages> = {
   'pt-BR': pt,
   en: { ...pt,
+    cancel: 'Cancel', save: 'Save', saving: 'Saving…', closeNotice: 'Dismiss notice',
+    conversationArchived: 'Conversation archived. You can restore it in Archived.',
+    conversationDeleted: 'Conversation deleted.', conversationRestored: 'Conversation restored to Recent.',
     technicalPause: 'I could not find a safe action to make progress. The task is paused; choose Continue to observe the page again.', technicalFailure: 'A technical failure paused the task. Choose Continue to check the page and try again.',
     inputTitle: 'Jev needs some information', inputHint: 'Reply in chat to continue the same task. Do not send passwords or codes.', cancelInput: 'Cancel question', stateInput: 'Waiting for information',
     general:'General',appearance:'APPEARANCE',preferences:'PREFERENCES',modelTab:'Model',settingsSubtitle:'Account and workspace settings',
@@ -46,6 +52,9 @@ const dictionaries: Record<Locale, Messages> = {
     manualControl:'Manual control',takeControl:'Take control',preparingManual:'Preparing manual control…',youControl:'You are in control',controlElsewhere:'Controlled in another interface',recoverControl:'Refresh and recover control',continueJev:'Continue with Jev',exitManual:'Exit manual control',handoffTitle:'Jev needs you to take control',handoffLOGIN:'This page asks for a sign-in or password. Take control, sign in, then choose Continue with Jev.',handoffCAPTCHA:'A human verification (CAPTCHA) appeared. Take control, solve it, then choose Continue with Jev.',handoffVERIFICATION_CODE:'The page asks for a verification code. Take control, enter it, then choose Continue with Jev.',handoffPERSONAL_DATA:'I need information only you can provide. Take control, fill it in, then choose Continue with Jev.',handoffSTUCK:'I cannot make progress on this page. Take control, clear the blocker, then choose Continue with Jev.',handoffOTHER:'I need your help on this page. Take control, clear the blocker, then choose Continue with Jev.',manualHint:'Click the page to type. Text is protected; the assistant is paused.',
     stages:{startup:'Browser startup',navigation:'Navigation',observation:'Observation',guard:'Guards',preview_guard:'Preview guards',capture:'Captures',execution:'Browser execution',decision:'Decision cycle',decision_model:'Jev model',text_model:'Text generation',helper_request:'Destination and intent',helper_answer:'Page answer',helper_safety:'Safety assessment',helper_verify:'Verification and reply',publication:'State update'} },
   es: { ...pt,
+    cancel: 'Cancelar', save: 'Guardar', saving: 'Guardando…', closeNotice: 'Cerrar aviso',
+    conversationArchived: 'Conversación archivada. Puedes restaurarla en Archivadas.',
+    conversationDeleted: 'Conversación eliminada.', conversationRestored: 'Conversación restaurada en Recientes.',
     technicalPause: 'No encontré una acción segura para avanzar. La tarea está pausada; elige Continuar para observar la página de nuevo.', technicalFailure: 'Un fallo técnico pausó la tarea. Elige Continuar para revisar la página e intentarlo de nuevo.',
     inputTitle: 'Jev necesita un dato', inputHint: 'Responde en el chat para continuar la misma tarea. No envíes contraseñas ni códigos.', cancelInput: 'Cancelar pregunta', stateInput: 'Esperando información',
     general:'General',appearance:'APARIENCIA',preferences:'PREFERENCIAS',modelTab:'Modelo',settingsSubtitle:'Configuración de la cuenta y del espacio de trabajo',
@@ -53,6 +62,9 @@ const dictionaries: Record<Locale, Messages> = {
     manualControl:'Control manual',takeControl:'Tomar el control',preparingManual:'Preparando el control manual…',youControl:'Tienes el control',controlElsewhere:'Control en otra interfaz',recoverControl:'Actualizar y recuperar el control',continueJev:'Continuar con Jev',exitManual:'Salir del control manual',handoffTitle:'Jev necesita que tomes el control',handoffLOGIN:'Esta página pide iniciar sesión o una contraseña. Toma el control, inicia sesión y elige Continuar con Jev.',handoffCAPTCHA:'Apareció una verificación humana (CAPTCHA). Toma el control, resuélvela y elige Continuar con Jev.',handoffVERIFICATION_CODE:'La página pide un código de verificación. Toma el control, introdúcelo y elige Continuar con Jev.',handoffPERSONAL_DATA:'Necesito un dato que solo tú puedes dar. Toma el control, complétalo y elige Continuar con Jev.',handoffSTUCK:'No consigo avanzar en esta página. Toma el control, resuelve el bloqueo y elige Continuar con Jev.',handoffOTHER:'Necesito tu ayuda en esta página. Toma el control, resuelve el bloqueo y elige Continuar con Jev.',manualHint:'Haz clic en la página para escribir. El texto está protegido; el asistente está pausado.',
     stages:{startup:'Apertura del navegador',navigation:'Navegación',observation:'Observación',guard:'Guardas',preview_guard:'Guardas de vista previa',capture:'Capturas',execution:'Ejecución en navegador',decision:'Ciclo de decisión',decision_model:'Modelo Jev',text_model:'Generación de texto',helper_request:'Destino e intención',helper_answer:'Respuesta de la página',helper_safety:'Evaluación de seguridad',helper_verify:'Verificación y respuesta',publication:'Actualización de estado'} },
   fr: { ...pt,
+    cancel: 'Annuler', save: 'Enregistrer', saving: 'Enregistrement…', closeNotice: 'Fermer le message',
+    conversationArchived: 'Conversation archivée. Vous pouvez la restaurer dans Archivées.',
+    conversationDeleted: 'Conversation supprimée.', conversationRestored: 'Conversation restaurée dans Récentes.',
     technicalPause: 'Je n’ai pas trouvé d’action sûre pour avancer. La tâche est en pause ; choisissez Continuer pour observer à nouveau la page.', technicalFailure: 'Un problème technique a interrompu la tâche. Choisissez Continuer pour vérifier la page et réessayer.',
     inputTitle: 'Jev a besoin d’une information', inputHint: 'Répondez dans le chat pour continuer la même tâche. N’envoyez pas de mots de passe ni de codes.', cancelInput: 'Annuler la question', stateInput: 'En attente d’une information',
     general:'Général',appearance:'APPARENCE',preferences:'PRÉFÉRENCES',modelTab:'Modèle',settingsSubtitle:"Paramètres du compte et de l’espace de travail",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { currentLocale, LanguageSegment, translate, useI18n } from './i18n';
 import ManualPanel, { canBrowse } from './ManualPanel';
+import ConversationActions from './ConversationActions';
 import { manualHeaders, ownsManual } from '../../jev_ultrafast/static/manual.js';
 
 type Message = {
@@ -372,6 +373,7 @@ function App() {
   const [search, setSearch] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [conversationNotice, setConversationNotice] = useState<'conversationArchived' | 'conversationDeleted' | 'conversationRestored' | ''>('');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 900 && window.location.pathname !== '/settings');
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -622,27 +624,34 @@ function App() {
   }
 
   async function deleteChat(id: string) {
-    if (disabledSession || (id === state?.session_id && !confirmDiscard()) || !window.confirm(t('deleteChat'))) return;
-    if (await perform('delete', { conversation_id: id })) { setDraft(''); setHistoryOpen(false); }
+    if (disabledSession || (id === state?.session_id && !confirmDiscard())) return false;
+    const current = id === state?.session_id;
+    const done = await perform('delete', { conversation_id: id });
+    if (done) {
+      if (current) { setDraft(''); setHistoryOpen(false); }
+      setConversationNotice('conversationDeleted');
+    }
+    return done;
   }
 
-  async function renameChat(item: Conversation) {
-    if (disabledSession) return;
-    const title = window.prompt(t('conversationName'), displayTitle(item.title));
-    if (title == null || title.trim() === displayTitle(item.title)) return;
-    await perform('rename', { conversation_id: item.id, title });
+  async function renameChat(item: Conversation, title: string) {
+    if (disabledSession) return false;
+    return perform('rename', { conversation_id: item.id, title });
   }
 
   async function archiveChat(item: Conversation) {
     if (disabledSession || (item.id === state?.session_id && !confirmDiscard())) return;
-    if (await perform('archive', { conversation_id: item.id }) && item.id === state?.session_id) {
-      setDraft(''); setHistoryOpen(true);
+    if (await perform('archive', { conversation_id: item.id })) {
+      setConversationNotice('conversationArchived');
+      if (item.id === state?.session_id) {
+        setDraft(''); setHistoryOpen(true); setShowArchived(true);
+      }
     }
   }
 
   async function unarchiveChat(item: Conversation) {
     if (disabledSession) return;
-    await perform('unarchive', { conversation_id: item.id });
+    if (await perform('unarchive', { conversation_id: item.id })) setConversationNotice('conversationRestored');
   }
 
   const manualState = useCallback((next:Snapshot) => {
@@ -666,12 +675,9 @@ function App() {
   const resizePreview = (width: number) => setPreviewWidth(Math.min(maxPreviewWidth, Math.max(300, width)));
 
   function conversationActions(item: Conversation) {
-    return <details className="conversation-actions"><summary className="icon-btn" aria-label={t('actionsFor', { title: displayTitle(item.title) })}><Icon name="more" /></summary><div className="conversation-menu">
-      <button type="button" disabled={disabledSession} onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void selectChat(item.id); }}>{t('openConversation')}</button>
-      <button type="button" disabled={disabledSession} onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void renameChat(item); }}>{t('rename')}</button>
-      <button type="button" disabled={disabledSession} onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void (item.archived ? unarchiveChat(item) : archiveChat(item)); }}>{item.archived ? t('restoreConversation') : t('archiveConversation')}</button>
-      <button type="button" className="danger" disabled={disabledSession} onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void deleteChat(item.id); }}>{t('deleteConversation')}</button>
-    </div></details>;
+    return <ConversationActions title={displayTitle(item.title)} archived={item.archived} disabled={disabledSession}
+      onOpen={() => { void selectChat(item.id); }} onRename={(title) => renameChat(item, title)}
+      onArchive={() => { void (item.archived ? unarchiveChat(item) : archiveChat(item)); }} onDelete={() => deleteChat(item.id)} />;
   }
 
   return <div className="app jev-app" data-sidebar={sidebarOpen ? 'open' : 'closed'} data-details={detailsOpen && !historyOpen ? 'open' : 'closed'} data-mobile-view={mobileView} data-page={settingsPage ? 'settings' : 'chat'}
@@ -680,11 +686,12 @@ function App() {
       <div className="sb-top"><span className="brand"><span className="brand-mark" aria-hidden="true" /><span className="brand-name" aria-hidden="true">JEV OpenFast Browser</span></span>
         <button className="icon-btn sb-toggle" onClick={() => { setSidebarOpen((value) => !value); if (window.innerWidth <= 900) setDetailsOpen(false); }} aria-label={sidebarOpen ? 'Recolher menu' : 'Expandir menu'}><Icon name="panel" /></button></div>
       <div className="sb-actions">
-        <button className="sb-act primary" aria-label={t('newChat')} title={t('newChat')} onClick={newChat} disabled={disabledSession}><Icon name="plus" /><span className="sb-label">{t('newChat')}</span></button>
+        <button id="new-chat" className="sb-act primary" aria-label={t('newChat')} title={t('newChat')} onClick={newChat} disabled={disabledSession}><Icon name="plus" /><span className="sb-label">{t('newChat')}</span></button>
         <button className={`sb-act ${historyOpen ? 'is-active' : ''}`} aria-label={t('search')} title={t('search')} onClick={() => { setHistoryOpen(true); if (window.innerWidth <= 900) setSidebarOpen(false); }}><Icon name="search" /><span className="sb-label">{t('search')}</span></button>
+        <button className={`sb-act ${historyOpen && showArchived ? 'is-active' : ''}`} aria-label={t('archived')} title={t('archived')} onClick={() => { setHistoryOpen(true); setShowArchived(true); setSearch(''); if (window.innerWidth <= 900) setSidebarOpen(false); }}><Icon name="clock" /><span className="sb-label">{t('archived')}</span></button>
       </div>
       <div className="sb-list"><div className="sb-section">{t('recents')} <span className="count">{activeConversations.length}</span></div>
-        {activeConversations.slice(0, 30).map((item) => <div className="sidebar-conversation" key={item.id}><button className={`convo ${item.id === state?.session_id ? 'active' : ''}`} onClick={() => selectChat(item.id)} disabled={disabledSession} title={item.title}>
+        {activeConversations.slice(0, 30).map((item) => <div className="sidebar-conversation" key={item.id}><button className={`convo ${item.id === state?.session_id ? 'active' : ''}`} aria-current={item.id === state?.session_id ? 'true' : undefined} onClick={() => selectChat(item.id)} disabled={disabledSession} title={displayTitle(item.title)}>
           <span className="convo-title">{displayTitle(item.title)}</span></button>{conversationActions(item)}</div>)}
       </div>
       <div className="sb-brand">JEV OpenFast Browser</div>
@@ -719,7 +726,10 @@ function App() {
     </main> : <>
       <main className={`main ${historyOpen ? 'history-main' : 'chat-main'}`}>
         <div className="topbar"><button className="icon-btn topbar-menu" onClick={() => { setSidebarOpen(true); setDetailsOpen(false); }} aria-label={t('openMenu')}><Icon name="panel" /></button>
-          <span className="crumbs"><b>{historyOpen ? t('history') : currentTitle}</b></span><span className="top-right"><span className={`top-pill ${error === t('connectionError') ? 'unavailable' : ''}`}><span className="dot" /> {error === t('connectionError') ? t('offline') : t('online')}</span></span></div>
+          <span className="crumbs"><b title={historyOpen ? t('history') : currentTitle}>{historyOpen ? t('history') : currentTitle}</b></span><span className="top-right"><span className={`top-pill ${error === t('connectionError') ? 'unavailable' : ''}`}><span className="dot" /> {error === t('connectionError') ? t('offline') : t('online')}</span></span></div>
+          {conversationNotice && <div className="conversation-notice" role="status"><span>{t(conversationNotice)}</span>
+            {conversationNotice === 'conversationArchived' && <button type="button" onClick={() => { setHistoryOpen(true); setShowArchived(true); setSearch(''); setConversationNotice(''); }}>{t('archived')}</button>}
+            <button type="button" className="icon-btn" aria-label={t('closeNotice')} onClick={() => setConversationNotice('')}>×</button></div>}
         {(error || state?.storage_error) && <div className="error-banner" role="alert">{error || state?.storage_error}</div>}
         {historyOpen ? <div className="history-view"><div className="history-heading"><h1>{t('history')}</h1><button onClick={() => setHistoryOpen(false)}>{t('backToChat')}</button></div>
           <label className="search-field"><Icon name="search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchConversations')} aria-label={t('searchConversations')} autoFocus /></label>
