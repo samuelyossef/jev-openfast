@@ -119,18 +119,18 @@ function renderChat() {
     }
     if (message.verification) {
       const badge = document.createElement("span");
-      badge.className = `verification ${message.verification.satisfied ? "verified" : "unverified"}`;
+      badge.className = `verification ${message.verification.satisfied && !message.verification.stale ? "verified" : "unverified"}`;
       badge.textContent = message.verification.stale ? "Página alterada — verificação desatualizada" : message.verification.satisfied ? "Confirmado na página" : "Conclusão não confirmada";
       article.append(badge);
       if (message.verification.checks?.length) {
         const checklist = document.createElement("details");
-        checklist.open = !message.verification.satisfied;
+        checklist.open = !message.verification.satisfied || message.verification.stale;
         const summary = document.createElement("summary");
         summary.textContent = "Conferência do pedido";
         checklist.append(summary);
         for (const check of message.verification.checks) {
           const item = document.createElement("p");
-          const labels = { confirmed: "Confirmado", not_met: "Não atendido", unknown: "Não foi possível verificar" };
+          const labels = { confirmed: message.verification.stale ? "Confirmado anteriormente" : "Confirmado", not_met: "Não atendido", unknown: "Não foi possível verificar" };
           item.textContent = `${check.requirement} — ${labels[check.status]}\n${check.reason}\n${check.evidence.join("\n")}`;
           checklist.append(item);
         }

@@ -173,6 +173,8 @@ class Manual:
                 # Free browsing between tasks: the conversation keeps its phase and nothing waits for the user.
                 self.reason = ""
             self.session.preview.begin_manual(self.session.agent.browser, self)
+            if self.can_resume:
+                self.session.turn_finished = None
             self.session._publish()
 
     def frame(self, context):
@@ -355,6 +357,7 @@ class Manual:
         if self.can_resume:
             session.agent.state["status"] = "done" if session.resume_stage == "finish" else "ready"
             session.phase = "paused"
+            session.turn_finished = time.perf_counter()
         else:
             session.phase = self.original_phase
 

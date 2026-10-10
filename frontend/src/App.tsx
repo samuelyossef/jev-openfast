@@ -198,14 +198,14 @@ function MessageCard({ message, progress, onRecheck, rechecking, actions }: { me
     </div> : message.kind === 'input' ? <div className="approval-card" role="status"><strong>{t('inputTitle')}</strong><p>{message.content}</p><p>{t('inputHint')}</p>{actions}</div>
       : message.kind === 'technical_pause' ? <div className="msg-text" role="status"><strong>{t(message.pause_code === 'failure' ? 'technicalFailure' : 'technicalPause')}</strong><p>{message.content}</p></div>
         : <div className="msg-text">{message.content || <span className="msg-pending">{t('stateThinking')}… {progress && <span className="msg-progress" role="status">{progress}</span>}</span>}</div>}
-    {message.verification && <div className={`verification ${message.verification.satisfied ? 'verified' : 'unverified'}`}>
+    {message.verification && <div className={`verification ${message.verification.satisfied && !message.verification.stale ? 'verified' : 'unverified'}`}>
       {message.verification.stale ? t('staleVerification') : message.verification.satisfied ? t('confirmed') : t('unconfirmed')}
     </div>}
     {message.verification?.evidence?.length ? <details className="evidence"><summary>{t('evidence')}</summary><p>{message.verification.evidence.join('\n')}</p></details> : null}
-    {!!message.verification?.checks?.length && <details className="verification-checks" open={!message.verification.satisfied}>
+    {!!message.verification?.checks?.length && <details className="verification-checks" open={!message.verification.satisfied || message.verification.stale}>
       <summary>{t('requestCheck')} ({message.verification.checks.length})</summary>
       <ul>{message.verification.checks.map((check, index) => <li key={index} data-status={check.status}>
-        <strong>{check.requirement}</strong><span>{check.status === 'confirmed' ? t('statusConfirmed') : check.status === 'not_met' ? t('statusNotMet') : t('statusUnknown')}</span>
+        <strong>{check.requirement}</strong><span>{check.status === 'confirmed' ? t(message.verification?.stale ? 'statusPreviouslyConfirmed' : 'statusConfirmed') : check.status === 'not_met' ? t('statusNotMet') : t('statusUnknown')}</span>
         <p>{check.reason}</p>{!!check.evidence.length && <blockquote>{check.evidence.join('\n')}</blockquote>}
       </li>)}</ul>
     </details>}

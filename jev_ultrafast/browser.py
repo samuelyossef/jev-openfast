@@ -221,6 +221,21 @@ class Browser:
                     raise StalePage("Page did not settle") from None
                 time.sleep(0.05)
 
+    def observe_settled(self, timeout=2, stable_for=0.25):
+        """After a stale choice, let changing controls settle before another model request."""
+        page = self.observe(screenshot=False)
+        started = stable_since = time.monotonic()
+        while time.monotonic() - started < timeout:
+            time.sleep(0.05)
+            current = self.observe(screenshot=False)
+            now = time.monotonic()
+            if current["fingerprint"] != page["fingerprint"]:
+                stable_since = now
+            page = current
+            if now - stable_since >= stable_for:
+                break
+        return page
+
     @timed("guard")
     def fresh(self, page, action=None):
         if action is not None and action["kind"] in {"click", "fill", "select", "press_enter"}:
@@ -421,6 +436,8 @@ class Browser:
 
 def fingerprint(state):
     content = {k: state[k] for k in ("url", "text", "actions", "scroll")}
+    # Input still resolves and hit-tests live geometry; layout movement is not task progress.
+    content["actions"] = [{k: v for k, v in action.items() if k != "rect"} for action in state["actions"]]
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 

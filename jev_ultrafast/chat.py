@@ -168,6 +168,11 @@ class ChatSession:
         session.id = record["id"]
         session.preview.session_id = session.id
         session.messages = record["messages"]
+        for message in session.messages:
+            if message.get("verification") and (
+                message["verification"].get("checks") or message["verification"].get("satisfied")
+            ):
+                message["verification"]["stale"] = True
         session.message_ids = {message["turn_id"] for message in session.messages if message.get("turn_id")}
         session.last_url = record["last_url"]
         if record["phase"] in {"thinking", "running", "verifying", "awaiting_confirmation",
@@ -498,6 +503,9 @@ class ChatSession:
             )
             # The self-contained restatement drives the agent and the checks; the chat keeps the user's words.
             self.task = route["task"].strip() or self.goal  # page questions often come back without a restatement
+            if route["intent"] == "task":
+                # References are resolved above; earlier assistant claims must not become task facts.
+                self.conversation = [message for message in self.conversation if message["role"] == "user"]
             if route["url"] != "-":
                 url = routed_url(route["url"], self.goal)
                 if self.pause_requested.is_set():
@@ -561,6 +569,7 @@ class ChatSession:
             self.agent.state["decision"] = None
         self.resume_stage = stage
         self.phase, self.progress = "paused", text
+        self.turn_finished = time.perf_counter()
         self._reply(text, kind=kind, **extra)
         self._publish()
 
@@ -769,7 +778,7 @@ class ChatSession:
             except StalePage:
                 # Reobserve and choose anew. An already logged mutation is never repeated.
                 self.agent.state["decision"] = None
-                self.agent.state["page"] = self.agent.browser.observe(screenshot=False)
+                self.agent.state["page"] = self.agent.browser.observe_settled()
                 self.agent.state["status"] = "ready"
                 executed_after = sum(item["execution"] == "executed" for item in self.agent.state["history"])
                 stale_attempts = stale_attempts + 1 if executed_after == executed_before else 0
@@ -819,13 +828,15 @@ class ChatSession:
             allow_recovery and not verdict["satisfied"] and self.agent.state["status"] == "done"
             and self.recovery_attempts < 2 and not self.approved_commitment
             and all(item["execution"] != "uncertain" for item in history)
-            and any(check["status"] == "not_met" for check in checks)
+            and (any(check["status"] == "not_met" for check in checks)
+                 or (any(check["status"] == "confirmed" for check in checks)
+                     and any(check["status"] == "unknown" for check in checks)))
             and len(history) < MAX_STEPS and len(self.agent.state["decisions"]) < MAX_STEPS * 2
         ):
             self.recovery_attempts += 1
             self.agent.state["verification_feedback"] = [
                 {"requirement": check["requirement"], "reason": check["reason"]}
-                for check in checks if check["status"] == "not_met"
+                for check in checks if check["status"] != "confirmed"
             ]
             self.agent.state["status"] = "ready"
             self.progress = "Resultado incompleto; escolhendo uma ação corretiva…"
@@ -1000,6 +1011,7 @@ class ChatSession:
         if self.phase != "paused":
             raise ValueError("Não há uma tarefa pausada para continuar.")
         self.reconsidered_block = False
+        self.turn_finished = None
         self.phase, self.progress = "running", "Continuando a tarefa…"
         self._publish()
         self._launch({"begin": self._begin, "finish": self._finish}.get(self.resume_stage, self._resume_run))

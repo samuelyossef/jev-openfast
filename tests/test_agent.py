@@ -23,7 +23,6 @@ def page():
         "scroll": {"y": 0},
         "actions": [
             {"id": "e1", "kind": "fill", "label": "Search", "role": "textbox", "value": "", "node": 10},
-            {"id": "e2", "kind": "click", "label": "Open Search", "role": "textbox", "value": "", "node": 10},
             {"id": "e3", "kind": "click", "label": "Go", "role": "button", "value": "", "node": 20},
             {"id": "wait", "kind": "wait", "label": "Wait"},
         ],
@@ -70,9 +69,9 @@ def test_invalid_choice_is_rejected(mutation):
 def test_one_index_per_node_with_operation_specific_targets():
     elements, targets, controls = model.action_space(page()["actions"])
     assert len(elements) == 2
-    assert elements[0]["operations"] == ["TYPE_TEXT", "CLICK"]
+    assert elements[0]["operations"] == ["TYPE_TEXT"]
     assert targets["TYPE_TEXT"]["1"]["id"] == "e1"
-    assert targets["CLICK"]["1"]["id"] == "e2"
+    assert "1" not in targets["CLICK"]
     assert targets["CLICK"]["2"]["id"] == "e3"
     assert "WAIT" in controls
 
@@ -83,7 +82,7 @@ def test_enter_uses_its_own_observed_target_and_verification_feedback(monkeypatc
                             "role": "textbox", "value": "books", "node": 10})
     elements, targets, _ = model.action_space(p["actions"])
     assert len(elements) == 2
-    assert elements[0]["operations"] == ["TYPE_TEXT", "CLICK", "PRESS_ENTER"]
+    assert elements[0]["operations"] == ["TYPE_TEXT", "PRESS_ENTER"]
     assert targets["PRESS_ENTER"]["1"]["id"] == "e4"
 
     def post(_url, _key, body):
@@ -150,6 +149,10 @@ def test_all_heads_are_one_request_and_only_matching_head_executes(monkeypatch):
 
 @pytest.mark.parametrize("tied_head", ["operation", "click_target", "type_text_target"])
 def test_only_selected_head_ties_make_a_decision_ambiguous(monkeypatch, tied_head):
+    p = page()
+    if tied_head == "click_target":
+        p["actions"].append({"id": "e4", "kind": "click", "label": "Other", "role": "button", "node": 30})
+
     def post(_url, _key, body):
         answers = {name: choice(question["criteria"], next(iter(question["criteria"])))
                    for name, question in body["questions"].items()}
@@ -161,7 +164,7 @@ def test_only_selected_head_ties_make_a_decision_ambiguous(monkeypatch, tied_hea
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "test")
     monkeypatch.setattr(model, "post_json", post)
-    result = model.choose(page(), "Find a book", [])
+    result = model.choose(p, "Find a book", [])
     assert result["ambiguous"] == (tied_head != "type_text_target")
 
 
@@ -307,6 +310,105 @@ def test_text_generation_checks_the_selected_target(runner, monkeypatch):
     helper.assert_called_once()
 
 
+def test_unchanged_text_reconsiders_once_without_browser_input(runner, monkeypatch):
+    runner.state["page"]["actions"][0]["value"] = "book"
+    monkeypatch.setattr(loop, "field_text", Mock(return_value=("book", {"model": "test", "latency_ms": 1})))
+    for index in range(2):
+        runner.state["page"]["fingerprint"] = f"unrelated-ad-frame-{index}"
+        runner.state["decision"] = decision()
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+        assert runner.state["status"] == ("ready" if index == 0 else "blocked")
+    runner.state["browser"].act.assert_not_called()
+    assert all(h["execution"] == "not_executed" for h in runner.state["history"])
+    assert "unchanged field" in runner.state["stop_reason"]
+
+
+def test_unchanged_text_does_not_skip_a_field_that_changed_during_generation(runner, monkeypatch):
+    runner.state["page"]["actions"][0]["value"] = "book"
+    runner.state["browser"].fresh.side_effect = [True, False]
+    monkeypatch.setattr(loop, "field_text", Mock(return_value=("book", {"model": "test", "latency_ms": 1})))
+    with pytest.raises(StalePage, match="during text generation"):
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    runner.state["browser"].act.assert_not_called()
+    assert runner.state["history"] == [] and runner.state["status"] == "ready"
+
+
+def test_skipped_identical_text_is_visible_to_next_decision(monkeypatch):
+    def post(_url, _key, body):
+        assert body["state"]["recent_actions"] == [{
+            "action": "Search", "kind": "fill", "text": "book", "page_changed": False,
+            "execution": "not_executed", "skip_reason": "field already contains requested text",
+            "url": None,
+        }]
+        return {"model": "test", "answers": {
+            "operation": choice(body["questions"]["operation"]["criteria"], "CLICK"),
+            "click_target": choice(body["questions"]["click_target"]["criteria"], "2"),
+        }}
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", post)
+    history = [{"action": "Search", "kind": "fill", "text": "book", "page_changed": False,
+                "execution": "not_executed", "skip_reason": "field already contains requested text"},
+               {"action": "Search", "execution": "not_executed"}]
+    assert model.choose(page(), "Find a book", history)["choice"] == "e3"
+
+
+def test_changed_text_still_executes_once_after_a_skipped_fill(runner, monkeypatch):
+    runner.state["page"]["actions"][0]["value"] = "book"
+    helper = Mock(side_effect=[("book", {"model": "test", "latency_ms": 1}),
+                               ("different", {"model": "test", "latency_ms": 1})])
+    monkeypatch.setattr(loop, "field_text", helper)
+    runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    runner.state["decision"] = decision()
+    runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    runner.state["browser"].act.assert_called_once()
+    assert runner.state["history"][-1]["execution"] == "executed"
+
+
+def test_self_links_are_omitted_but_anchors_and_script_controls_remain(monkeypatch):
+    p = page()
+    p["actions"].extend([
+        {"id": "home", "kind": "click", "label": "Home", "node": 30, "href": p["url"]},
+        {"id": "anchor", "kind": "click", "label": "Section", "node": 40, "href": p["url"] + "#section"},
+        {"id": "next", "kind": "click", "label": "Next", "node": 50,
+         "href": p["url"], "navigation": False},
+    ])
+    def post(_url, _key, body):
+        assert "Home" not in [e["label"] for e in body["state"]["elements"]]
+        assert {"Section", "Next"} <= {e["label"] for e in body["state"]["elements"]}
+        return {"model": "test", "answers": {
+            "operation": choice(body["questions"]["operation"]["criteria"], "DONE")}}
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", post)
+    model.choose(p, "Find something", [])
+
+
+@pytest.mark.parametrize("new_values,offered", [(["book"], False), (["different"], True)])
+def test_applied_search_is_not_resubmitted_until_values_change(monkeypatch, new_values, offered):
+    p = page()
+    p["actions"][1].update(search_submit=True, form_values=new_values)
+    def post(_url, _key, body):
+        assert ("Go" in [e["label"] for e in body["state"]["elements"]]) is offered
+        return {"model": "test", "answers": {
+            "operation": choice(body["questions"]["operation"]["criteria"], "DONE")}}
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", post)
+    model.choose(p, "Find something", [{"execution": "executed", "search_submit": True,
+                                        "form_values": ["book"], "url": p["url"]}])
+
+
+def test_repeated_navigation_is_stopped_before_another_mutation(runner):
+    p = runner.state["page"]
+    p["actions"][1]["href"] = "https://example.test/destination"
+    runner.state["history"] = [{"execution": "executed", "href": p["actions"][1]["href"],
+                                 "source_url": p["url"]} for _ in range(2)]
+    runner.state["decision"] = decision("e3")
+    runner.command("act", {"fingerprint": p["fingerprint"]})
+    runner.state["browser"].act.assert_not_called()
+    assert runner.state["status"] == "blocked"
+    assert "Repeated navigation" in runner.state["stop_reason"]
+
+
 @pytest.mark.parametrize("kind", ["click", "fill", "select"])
 def test_target_guard_rejects_missing_observed_guard(kind):
     from jev_ultrafast.browser import Browser
@@ -340,6 +442,40 @@ def test_navigation_failure_never_retries_request():
         instance.navigate("https://example.test/")
     assert instance.call.call_count == 1
     instance.evaluate.assert_not_called()
+
+
+def test_stale_page_settles_by_reading_without_model_or_mutation(monkeypatch):
+    from jev_ultrafast import browser
+
+    clock = [0.0]
+    monkeypatch.setattr(browser.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(browser.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+    first, settled = page(), page()
+    settled["text"] = "Hydration finished"
+    settled["fingerprint"] = fingerprint(settled)
+    instance = browser.Browser.__new__(browser.Browser)
+    instance.observe = Mock(side_effect=[first, first, settled] + [settled] * 8)
+    instance.act = Mock()
+    model_call = Mock()
+    monkeypatch.setattr(model, "post_json", model_call)
+    assert instance.observe_settled() is settled
+    assert 0.25 <= clock[0] < 1
+    assert all(call.kwargs == {"screenshot": False} for call in instance.observe.call_args_list)
+    instance.act.assert_not_called()
+    model_call.assert_not_called()
+
+
+def test_page_settle_wait_is_bounded_when_content_keeps_changing(monkeypatch):
+    from jev_ultrafast import browser
+
+    clock = [0.0]
+    monkeypatch.setattr(browser.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(browser.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+    instance = browser.Browser.__new__(browser.Browser)
+    instance.observe = Mock(side_effect=lambda **kwargs: {"fingerprint": str(clock[0])})
+    latest = instance.observe_settled(timeout=0.3)
+    assert latest["fingerprint"] == str(clock[0])
+    assert 0.3 <= clock[0] < 0.4
 
 
 def test_generated_text_reused_only_for_identical_retry_context(runner, monkeypatch):
@@ -379,10 +515,13 @@ def test_repeated_two_action_cycle_stops_early(runner):
     first = page()
     second = deepcopy(first)
     second["text"] = "Other calendar month"
+    first["actions"].append({"id": "e4", "kind": "click", "label": "Other", "role": "button", "node": 30})
+    second["actions"] = deepcopy(first["actions"])
+    first["fingerprint"] = fingerprint(first)
     second["fingerprint"] = fingerprint(second)
     runner.state["page"] = first
     runner.state["browser"].observe.side_effect = [second, first] * 3
-    for index, action in enumerate(["e2", "e3"] * 3):
+    for index, action in enumerate(["e3", "e4"] * 3):
         runner.state["decision"] = decision(action)
         runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
         if index < 5:
@@ -601,8 +740,12 @@ def test_fingerprint_tracks_values_and_identity_not_screenshots():
     p = page()
     other = deepcopy(p)
     other["screenshot"] = "changed"
+    other["actions"][0]["rect"] = {"x": 50, "y": 120, "w": 500, "h": 30}
     assert fingerprint(p) == fingerprint(other)
     other["actions"][0]["node"] = 99
+    assert fingerprint(p) != fingerprint(other)
+    other = deepcopy(p)
+    other["actions"][0]["value"] = "new query"
     assert fingerprint(p) != fingerprint(other)
 
 
