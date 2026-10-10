@@ -19,7 +19,7 @@ READ_STATE = Path(__file__).with_name("snapshot.js").read_text(encoding="utf-8")
 PRIVACY = Path(__file__).with_name("privacy.js").read_text(encoding="utf-8")
 MARKER = f"(() => {{ const state={READ_STATE}; return state?.marker ?? null; }})()"
 
-class StalePage(ValueError):
+class StalePage(Exception):
     """A decision no longer refers to the observed page."""
 
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import __version__
-from .browser import validate_viewport
+from .browser import StalePage, validate_viewport
 from .chat import ChatSession, validate_message, validate_navigation, validate_url
 from .conversations import ConversationStore
 from .model import openrouter_key_status, validate_openrouter_key
@@ -284,6 +284,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Comando desconhecido.")
             result = command(path.removeprefix("/api/"), body, owner_token=self.headers.get("X-Manual-Control", ""))
             self.send(200, json.dumps(result))
+        except StalePage as error:
+            self.send(409, json.dumps({"error": str(error), "stale": True}))
         except (ValueError, RuntimeError, OSError) as error:
             self.send(400, json.dumps({"error": str(error)}))
         except Exception:

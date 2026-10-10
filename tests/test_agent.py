@@ -794,3 +794,22 @@ def test_decision_asks_again_once_after_an_invalid_choice(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test")
     monkeypatch.setattr(model, "post_json", post)
     assert model.choose(page(), "Find a book", [])["operation"] == "CLICK"
+
+
+def test_stale_page_is_not_a_validation_or_settle_error():
+    assert not issubclass(StalePage, (ValueError, RuntimeError))
+
+
+def test_demo_reports_stale_page_as_409(monkeypatch):
+    import io
+
+    import jev_ultrafast.demo as demo
+
+    monkeypatch.setattr(demo, "command", Mock(side_effect=StalePage("changed")))
+    h = demo.Handler.__new__(demo.Handler)
+    body = b"{}"
+    h.headers = {"Host": f"127.0.0.1:{demo.PORT}", "X-Demo-Token": demo.TOKEN, "Content-Length": str(len(body))}
+    h.path, h.rfile, h.send, h.connection = "/api/act", io.BytesIO(body), Mock(), Mock()
+    h.do_POST()
+    status, content = h.send.call_args.args
+    assert status == 409 and json.loads(content) == {"error": "changed", "stale": True}
