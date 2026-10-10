@@ -66,6 +66,17 @@
     if (rname==='gridcell' && e.querySelector('button,[role="button"]')) continue;
     const base={node:identity(e),role:rname,label:clean(name(e)||rname),
       rect:{x:r.x,y:r.y,w:r.width,h:r.height}};
+    if (e.tagName==='A' && e.href) {
+      base.href=privacy ? privacy.url(e.href) : e.href;
+      base.navigation=typeof e.onclick!=='function';
+    }
+    const form=e.form || e.closest('form');
+    if (form && (form.getAttribute('role')==='search' || form.querySelector('input[type="search"],[role="searchbox"]')) &&
+      ((e.tagName==='BUTTON' || e.tagName==='INPUT') && e.type==='submit')) {
+      base.search_submit=true;
+      base.form_values=[...form.elements].filter(field=>safe(field) &&
+        ['INPUT','TEXTAREA','SELECT'].includes(field.tagName)).map(field=>[clean(name(field)),currentValue(field)]);
+    }
     for (const key of ['checked','selected','expanded']) {
       const value=e.getAttribute('aria-'+key);
       if (value!==null) base[key]=value;
@@ -82,7 +93,6 @@
       const value=privacy && ('value' in e || e.isContentEditable) ? privacy.value(e) : 'value' in e ? String(e.value) :
         e.isContentEditable || rname==='combobox' ? e.innerText.trim() : '';
       actions.push({...base,kind:editable?'fill':'click',value});
-      if (editable) actions.push({...base,kind:'click',value,label:'Open '+base.label});
       if (editable && e.tagName==='INPUT')
         actions.push({...base,kind:'press_enter',value,label:'Press Enter in '+base.label});
     }

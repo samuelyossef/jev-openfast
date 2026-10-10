@@ -57,6 +57,19 @@ def test_owner_is_private_and_duplicate_input_is_never_repeated(session):
     assert session.manual.start({"owner_token": token}) == token  # Reload recovery.
 
 
+def test_failed_manual_activation_keeps_paused_clock_frozen(session, monkeypatch):
+    send(session)
+    session._paused()
+    finished = session.turn_finished
+    def fail(_active):
+        raise RuntimeError("Browser unavailable")
+    monkeypatch.setattr(session.agent.browser, "manual_mode", fail)
+    with pytest.raises(RuntimeError, match="Não foi possível assumir"):
+        session.manual.start({})
+    assert session.manual.status == "off"
+    assert session.turn_finished == finished
+
+
 def test_uncertain_input_blocks_followups_until_explicit_reconciliation(session, monkeypatch):
     token = take(session)
     def fail(event, group):

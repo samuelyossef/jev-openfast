@@ -54,6 +54,9 @@ class FakeBrowser:
             raise StalePage("Observation interrupted after execution")
         return copy.deepcopy(self.page)
 
+    def observe_settled(self):
+        return self.observe(screenshot=False)
+
     def fresh(self, page, action=None):
         return not self.changed
 
@@ -347,11 +350,17 @@ def test_compact_and_preview_http_are_read_only_and_session_bound(local_server):
 
 def test_repeated_stale_targets_pause_before_more_paid_helpers(offline, monkeypatch):
     session = chat.ChatSession("https://example.org")
+    settled = []
+    def observe_settled():
+        settled.append(True)
+        return session.agent.browser.observe(screenshot=False)
+    monkeypatch.setattr(session.agent.browser, "observe_settled", observe_settled)
     monkeypatch.setattr(session.agent.browser, "fresh", lambda page, action=None: action is None)
     view = send(session)
     assert view["chat_status"] == "paused"
     assert "três tentativas" in view["progress"]
     assert len(offline[1]) == 3
+    assert settled == [True] * 3
     assert not any(kind == "safety" for kind, _ in offline[0])
     assert not session.agent.browser.mutations
     monkeypatch.setattr(session.agent.browser, "fresh", lambda page, action=None: True)
@@ -359,6 +368,20 @@ def test_repeated_stale_targets_pause_before_more_paid_helpers(offline, monkeypa
     session.worker.join(5)
     assert session.snapshot()["chat_status"] == "completed"
     assert len(session.agent.browser.mutations) == 1
+
+
+def test_paused_request_clock_stops_and_resumes(offline, monkeypatch):
+    session = chat.ChatSession("https://example.org")
+    monkeypatch.setattr(session.agent.browser, "fresh", lambda page, action=None: action is None)
+    view = send(session)
+    assert view["chat_status"] == "paused"
+    paused_timing = view["timing"]["end_to_end_ms"]
+    monkeypatch.setattr(chat.time, "perf_counter", lambda: session.turn_started + paused_timing / 1000 + 60)
+    assert session.snapshot()["timing"]["end_to_end_ms"] == paused_timing
+    monkeypatch.setattr(session, "_launch", lambda *args: None)
+    session.resume()
+    assert session.turn_finished is None
+    assert session.snapshot()["timing"]["end_to_end_ms"] == paused_timing + 60000
 
 
 def test_pause_during_approval_check_prevents_input(offline, monkeypatch):
@@ -545,6 +568,9 @@ def test_two_tasks_reuse_tab_and_pass_conversation(offline):
     assert len(view["messages"]) == 4 and len(view["turns"]) == 1
     assert decisions[2]["goal"] == "Agora filtre o mesmo resultado"
     assert decisions[2]["conversation"][0]["content"] == "Busque um resultado"
+    assert all(message["role"] == "user" for message in decisions[2]["conversation"])
+    second_request = [context for kind, context in calls if kind == "request"][1]
+    assert any(message["role"] == "assistant" for message in second_request["conversation"])
     assert [kind for kind, _ in calls] == ["request", "safety", "verify"] * 2
     assert all(call["attempts"] == 1 and call["status"] == "ok" for call in view["chat_calls"])
     assert all("screenshot" not in context["page"] for _, context in calls if "page" in context)
@@ -708,11 +734,14 @@ def test_done_does_not_prove_completion(offline, setting):
 
 
 @pytest.mark.parametrize("second_satisfied", [True, False])
-def test_premature_done_gets_bounded_corrective_rounds(offline, monkeypatch, second_satisfied):
+@pytest.mark.parametrize("missing_status", ["not_met", "unknown"])
+def test_premature_done_gets_bounded_corrective_rounds(offline, monkeypatch, second_satisfied, missing_status):
     calls, decisions, config = offline
-    # An unknown check no longer prevents correcting a visibly missing requirement.
+    # A partially completed task also corrects requirements not yet evidenced.
     missing = {"satisfied": False, "checks": [
-        {"requirement": "Abrir resultado", "status": "not_met", "evidence": ["Resultado disponível"],
+        {"requirement": "Abrir site", "status": "confirmed", "evidence": ["Resultado disponível"],
+         "reason": "Site aberto."},
+        {"requirement": "Abrir resultado", "status": missing_status, "evidence": ["Resultado disponível"],
          "reason": "Resultado não aberto."},
         {"requirement": "Preço", "status": "unknown", "evidence": [], "reason": "Sem preço visível."}]}
     config["verify_sequence"] = [missing, {"satisfied": second_satisfied, "checks": [
@@ -733,10 +762,23 @@ def test_premature_done_gets_bounded_corrective_rounds(offline, monkeypatch, sec
     assert len(view["history"]) == 2
     assert len(decisions) == (4 if second_satisfied else 5)
     assert decisions[2]["verification_feedback"] == [
-        {"requirement": "Abrir resultado", "reason": "Resultado não aberto."}]
+        {"requirement": "Abrir resultado", "reason": "Resultado não aberto."},
+        {"requirement": "Preço", "reason": "Sem preço visível."}]
     assert view["messages"][-1]["verification"]["satisfied"] is second_satisfied
     assert len([kind for kind, _ in calls if kind == "verify"]) == (2 if second_satisfied else 3)
     assert session.recovery_attempts == (1 if second_satisfied else 2)
+
+
+def test_content_completion_prompts_require_detail_page_without_changing_list_goals():
+    from jev_ultrafast.questions import NEXT_ACTION
+
+    for prompt in (NEXT_ACTION, assistant.PROMPTS["verify"]):
+        assert "detail page" in prompt
+        assert "featured-content preview" in prompt
+        assert "list results may end on a listing" in prompt
+    assert "Mark the content requirement not_met" in assistant.PROMPTS["verify"]
+    assert "recency needs visible supporting evidence" in assistant.PROMPTS["verify"]
+    assert "do not choose DONE again" in NEXT_ACTION
 
 
 def test_approved_commitment_never_gets_corrective_mutation(offline):
@@ -814,6 +856,32 @@ def test_positive_verdict_requires_every_check_and_visible_evidence(monkeypatch,
     if status == "confirmed":
         assert verdict["checks"][1]["status"] == "unknown"
         assert not verdict["checks"][1]["evidence"]
+
+
+def test_verification_retries_once_when_its_evidence_is_not_on_the_page(monkeypatch):
+    page = {"url": "https://youtube.com/@anthropic-ai", "title": "Anthropic - YouTube",
+            "elements": [], "text": "Apresentando Claude Fable 5.1"}
+    invalid = {"satisfied": True, "reply": "Encontrei o vídeo.", "checks": [
+        {"requirement": "Encontrar vídeo", "status": "confirmed", "evidence": ["Vídeo encontrado"],
+         "reason": "A página mostra o vídeo."}]}
+    valid = {"satisfied": True, "reply": "Encontrei o vídeo.", "checks": [
+        {"requirement": "Encontrar vídeo", "status": "confirmed", "evidence": ["Apresentando Claude Fable 5.1"],
+         "reason": "A página mostra o vídeo."}]}
+    responses = iter([invalid, valid])
+
+    def ask(kind, context, calls):
+        calls.append({"kind": kind, "context": context})
+        return next(responses)
+
+    monkeypatch.setattr(assistant, "ask", ask)
+    calls = []
+    verdict = assistant.verify({"page": page}, calls)
+
+    assert verdict["satisfied"] is True
+    assert len(calls) == 2
+    assert calls[0]["evidence_valid"] is False
+    assert calls[1]["evidence_valid"] is True
+    assert "verification_feedback" in calls[1]["context"]
 
 
 def test_evidence_spanning_adjacent_text_nodes_counts_as_visible(monkeypatch):
@@ -1181,6 +1249,7 @@ def test_history_survives_restart_and_continues_in_new_tab(local_server):
     assert restored["session_id"] == conversation_id
     assert len(restored["messages"]) == 2
     assert restored["page"] is None and restored["approval"] is None
+    assert restored["messages"][-1]["verification"]["stale"] is True
     assert len(FakeBrowser.instances) == 1  # Opening history never replays browser work.
 
     client.post("/api/message", json={"session_id": conversation_id, "message": "Busque outro resultado",

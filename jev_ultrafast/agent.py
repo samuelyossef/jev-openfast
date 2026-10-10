@@ -175,6 +175,13 @@ class Agent:
             state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
             return
         action = next(a for a in page["actions"] if a["id"] == selected)
+        previous_navigation = [h for h in state["history"] if h.get("execution") == "executed"
+                               and h.get("href") == action.get("href") and h.get("source_url") == page["url"]]
+        if action.get("href") and action.get("navigation") is not False and "#" not in action["href"] \
+                and len(previous_navigation) >= 2:
+            state["status"] = "blocked"
+            state["stop_reason"] = "Repeated navigation to the same destination; no input executed"
+            return
         if decision.get("ambiguous"):
             state["status"] = "ready"
             raise ValueError("Operation or target alternatives are tied; observe and choose again")
@@ -190,6 +197,9 @@ class Agent:
                 state["status"], state["stop_reason"] = "blocked", str(error)
                 state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
                 return
+            if text == action.get("value") and not state["browser"].fresh(page, action):
+                state["status"] = "ready"
+                raise StalePage("Field changed during text generation. Choose again.")
         # Record the attempt before browser input, including an uncertain transport result.
         entry = {
             "step": len(state["history"]) + 1,
@@ -210,11 +220,27 @@ class Agent:
             "execution": "requested",
             "page_changed": None,
             "url": page["url"],
+            "source_url": page["url"],
+            **{k: action[k] for k in ("href", "search_submit", "form_values") if k in action},
             "usage": decision["usage"],
             "executed_ms": None,
             "elapsed_ms": round((time.perf_counter() - state["started_at"]) * 1000),
         }
         state["history"].append(entry)
+        if action["kind"] == "fill" and text == action.get("value"):
+            # The requested value is already present; reconsider once without browser input.
+            entry.update(execution="not_executed", page_changed=False,
+                         skip_reason="field already contains requested text",
+                         fingerprint=page["fingerprint"], node=action["node"])
+            previous = state["history"][-2] if len(state["history"]) > 1 else {}
+            repeated = all(previous.get(k) == entry[k] for k in
+                           ("skip_reason", "source_url", "node", "text"))
+            state["status"] = "blocked" if repeated else "ready"
+            if repeated:
+                state["stop_reason"] = "Repeated typing of an unchanged field; no input executed"
+            state["elapsed_ms"] = entry["elapsed_ms"]
+            self.pending_text = None
+            return
         try:
             # Browser.act checks freshness immediately before input, including after text generation.
             state["browser"].act(action, page, text=text)

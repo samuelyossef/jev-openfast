@@ -125,7 +125,8 @@ def action_space(actions):
         if node not in indices:
             index = str(len(elements) + 1)
             indices[node] = index
-            element = {k: action[k] for k in ("role", "value", "checked", "selected", "expanded") if k in action}
+            element = {k: action[k] for k in ("role", "value", "checked", "selected", "expanded", "href")
+                       if k in action}
             element.update(index=index, label=action["label"].split(" → ")[0], operations=[])
             if kind == "select":
                 element["value"] = action.get("current_value", "")
@@ -155,7 +156,16 @@ def choice_margin(answer):
 
 
 def _choose(state, goal, history, *, conversation=None, verification_feedback=None):
-    elements, targets, controls = action_space(state["actions"])
+    # A self-link without a fragment cannot advance navigation; keep real anchors and pagination.
+    actions = [a for a in state["actions"] if not (
+        a.get("navigation") is not False and a.get("href") == state["url"] and "#" not in a["href"])]
+    for previous in reversed(history):
+        if previous.get("execution") == "executed" and previous.get("search_submit"):
+            actions = [a for a in actions if not (
+                a.get("search_submit") and previous.get("url") == state["url"]
+                and a.get("form_values") == previous.get("form_values"))]
+            break
+    elements, targets, controls = action_space(actions)
     labels = {
         "CLICK": "Click an element, button, menu option, autocomplete suggestion, or calendar day.",
         "TYPE_TEXT": "Enter or replace text using the text model for the selected field.",
@@ -201,8 +211,8 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
                      "human_fields": state.get("human_fields", [])},
             "elements": elements,
             "recent_actions": [
-                {k: h.get(k) for k in ("action", "kind", "text", "page_changed", "execution")}
-                for h in history if h.get("execution", "executed") == "executed"
+                {k: h.get(k) for k in ("action", "kind", "text", "page_changed", "execution", "skip_reason", "url")}
+                for h in history if h.get("execution", "executed") == "executed" or h.get("skip_reason")
             ][-10:],
         },
         "questions": questions,

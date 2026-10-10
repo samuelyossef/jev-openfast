@@ -57,6 +57,28 @@ def main():
     browser = Browser("data:text/html," + quote(HTML))
     passed = []
     try:
+        browser.evaluate("""window.hydrationFinished=false; let replacements=0;
+          const hydration=setInterval(()=>{
+            const target=document.querySelector('#target'); target.outerHTML=target.outerHTML;
+            if (++replacements===5) {clearInterval(hydration);window.hydrationFinished=true;}
+          },40);""")
+        browser.observe_settled()
+        assert browser.evaluate("window.hydrationFinished && !window.clicks")
+        passed.append("bounded read-only settling waits through replaced controls without executing input")
+        browser.evaluate("""const search=document.createElement('form'); search.setAttribute('role','search');
+          search.innerHTML='<input type="search" aria-label="Lookup" value="ordinary query">'+
+            '<button type="submit">Find</button>';
+          document.body.append(search);
+          const self=document.createElement('a'); self.href=location.href; self.textContent='Current page';
+          document.body.append(self);""")
+        observed=browser.observe(screenshot=False)
+        submit=next(a for a in observed['actions'] if a['label']=='Find')
+        assert submit['search_submit'] and ['Lookup','ordinary query'] in submit['form_values']
+        link=next(a for a in observed['actions'] if a['label']=='Current page')
+        assert link['href']==observed['url'] and link['navigation']
+        browser.evaluate("document.querySelector('form[role=search]').remove(); "
+                         "[...document.querySelectorAll('a')].find(a=>a.textContent==='Current page').remove()")
+        passed.append("observed search values and scrubbed link destinations identify already applied navigation")
         page = browser.observe(screenshot=False)
         action = next(a for a in page["actions"] if a["label"] == "Continue")
         browser.evaluate("document.querySelector('#target').style.transform='translateX(200px)'")
@@ -117,17 +139,18 @@ def main():
           <label><input id="check" type="checkbox">Enabled</label>
           <label><input id="radio" type="radio">Choice</label>
           <input id="readonly" aria-label="Read only" readonly>
-          <input id="secret" type="password" value="never expose this">
           <button id="off" disabled>Disabled</button>
           <select id="category" aria-label="Category">
             <option>All</option><option>Design</option><option disabled>Unavailable</option>
-          </select></form><aside id="unrelated">News</aside>
+          </select></form><input id="secret" type="password" value="never expose this">
+          <aside id="unrelated">News</aside>
         """))
         page = browser.observe(screenshot=False)
         buy = next(a for a in page["actions"] if a["label"] == "Buy")
         browser.evaluate("document.querySelector('#unrelated').textContent='New unrelated news'")
         assert browser.fresh(page, buy)
-        field = next(a for a in page["actions"] if a["kind"] == "fill")
+        field = next((a for a in page["actions"] if a["kind"] == "fill"), None)
+        assert field is not None, page["actions"]
         assert browser.fresh(page, field)
         assert not browser.fresh(page)
         passed.append("click and fill guards accept unrelated visible updates; terminal guard rejects them")
@@ -160,6 +183,8 @@ def main():
 
         page = browser.observe(screenshot=False)
         actions = page["actions"]
+        text_fields = {a["node"] for a in actions if a["kind"] == "fill"}
+        assert text_fields and not any(a["kind"] == "click" and a["node"] in text_fields for a in actions)
         for role in ("checkbox", "radio"):
             assert {a["kind"] for a in actions if a.get("role") == role} == {"click"}
         assert {a["kind"] for a in actions if a["label"] == "Read only"} == {"click"}
