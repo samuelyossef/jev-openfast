@@ -32,6 +32,8 @@ description is a concise question for input, or explanation for human/recover, i
 task requests browser interaction. answer requests information the current page already shows,
 or clarification; a question about the current page never authorizes clicks or typing. A question
 the current page cannot answer is a task: look it up, ending on a page that shows the answer.
+Statements and pasted reports without a request for interaction are answer; ask what the user wants
+to do with that content instead of inventing a navigation task. Use url="-" for that clarification.
 Return url as the explicit http/https URL copied exactly,
 or the official homepage of a clearly named site. For general web search choose a public
 search homepage. Do not invent deep links or private hosts. Use url="-" only if the current
@@ -72,6 +74,8 @@ The user's goal is not approval for the final external commitment.""",
 satisfied in this fresh observation. Earlier actions and a model's completion claim are not proof.
 Return one check for EACH requirement, including constraints, filters, quantities and requested final state.
 Use conversation only to resolve references in the current goal. Do not omit a requirement to claim success.
+goal is the original user request. resolved_task may clarify references but cannot remove, narrow or
+replace any requirement in goal. Check the original goal even when resolved_task is shorter.
 Each check has requirement, status (confirmed, not_met or unknown), exact evidence quotes and a short reason.
 confirmed requires visible proof; not_met means visible contradiction; unknown means insufficient proof.
 A filled search field is not submitted results. An offered option is not a selected filter.
