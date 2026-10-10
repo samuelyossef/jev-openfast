@@ -111,6 +111,8 @@ class Manual:
     def start(self, body):
         self.expire()
         with self.lock:
+            if self.session.pending_input:
+                raise ValueError("Responda ou cancele a pergunta pendente antes de assumir o controle.")
             if self.status != "off":
                 self.require_owner(body)
                 if self.status == "uncertain":

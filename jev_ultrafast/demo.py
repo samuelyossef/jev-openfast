@@ -42,7 +42,7 @@ def response_state(compact=False, owner_token=None):
     session = SESSION
     state = session.snapshot(compact=compact) if session else {
         "page": None, "status": "idle", "history": [], "decision": None,
-        "messages": [], "chat_status": "idle", "session_id": None, "approval": None,
+        "messages": [], "chat_status": "idle", "session_id": None, "approval": None, "pending_input": None,
         "progress": "Descreva o que deseja fazer.",
         "storage_error": None,
     }
@@ -180,6 +180,7 @@ def command(name, body, owner_token=None):
         if name == "viewport" and SESSION.manual.status != "off" and not SESSION.manual.is_owner(owner_token):
             raise ValueError("A prévia está em leitura nesta interface durante o controle manual.")
         actions = {
+            "input": lambda: SESSION.input(body),
             "message": lambda: SESSION.message(body), "approve": lambda: SESSION.approve(body),
             "reject": lambda: SESSION.reject(body), "pause": SESSION.pause, "resume": SESSION.resume,
             "verify": SESSION.recheck, "navigate": lambda: SESSION.navigate_user(body),

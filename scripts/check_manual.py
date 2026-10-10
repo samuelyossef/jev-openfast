@@ -38,6 +38,9 @@ def main():
         calls.append({"kind": kind, "model": "offline", "status": "mocked"})
         if kind == "request":
             return {"intent": "task", "url": "-", "reply": "Verificando a página local.", "task": context["goal"]}
+        if kind == "blocker":
+            return {"kind": "human", "reason": "LOGIN", "description": "A página exige autenticação.",
+                    "evidence": ["Senha"]}
         if kind == "verify":
             return {"satisfied": True, "checks": [{"requirement": "Entrar", "status": "confirmed",
                     "evidence": ["Autenticação concluída"], "reason": "Estado atual observado."}],
@@ -54,8 +57,9 @@ def main():
     try:
         session.message({"message": "Entre na página local", "message_id": "manual-check"})
         session.worker.join(5)
-        assert session.phase == "paused" and len(requests) == 1, (session.phase, len(requests), session.progress)
-        passed.append("BLOCKED requests intervention without another helper")
+        assert session.phase == "paused" and 2 <= len(requests) <= 3, (session.phase, len(requests), session.progress)
+        before_manual = len(requests)
+        passed.append("BLOCKED requests intervention only after current login evidence is assessed")
         owner = session.manual.start({})
         browser = session.agent.browser
         def frame():
@@ -129,9 +133,9 @@ def main():
         assert not any(a["node"] in [page["page_key"][6][i][0] for i in (1, 2, 3, 4, 5)]
                        for a in page["actions"] if "node" in a)
         passed.append("protected values redacted in text, guards, actions and opaque field versions")
-        assert len(requests) == 1, session.messages[-1]
+        assert len(requests) == before_manual, session.messages[-1]
         session.manual.end({"owner_token": owner, "resume": False})
-        assert session.phase == "paused" and len(requests) == 1, (session.phase, len(requests), session.progress)
+        assert session.phase == "paused" and len(requests) == before_manual
         agent.choose = lambda *_a, **_kw: {"choice": "DONE", "operation": "DONE", "target": None,
                                          "latency_ms": 0, "usage": {}, "confidence": 1, "probabilities": {"DONE": 1}}
         session.resume()

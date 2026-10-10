@@ -43,6 +43,10 @@ is `TYPE_TEXT`.
   appears in the chat. **Take control** gives you the page (mouse, keyboard, text); **Continue with Jev**
   resumes the task automatically. Passwords and codes you type are hidden from the assistant, and no model
   calls happen while you drive.
+- **Ordinary missing values stay in chat.** If a required city, date or contact email is missing, JEV asks
+  for that value and resumes the same task from a fresh observation. Cancel the question to pause. Passwords,
+  login credentials, codes and sensitive identity/payment data use manual control. A generic iframe or a
+  technical obstacle does not request takeover; a human-only blocker must have current page evidence.
 - **Browse freely.** While no task is running you can scroll, click and follow links directly in the preview, or use
   its address bar with Back, Forward and Reload. Under manual control the preview is a live stream (about
   8 frames per second in headless Chrome) instead of periodic screenshots.

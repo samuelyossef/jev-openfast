@@ -1,4 +1,5 @@
 """Manual ownership, handoff and at-most-once input. All model transports are offline."""
+# ruff: noqa: F811
 
 import copy
 import json
@@ -149,13 +150,22 @@ def test_closing_or_switching_conversation_ends_browsing(session):
     assert session.manual.status == "off"
 
 
-def test_blocked_requests_intervention_without_helper_and_resume_observes_current_page(session, monkeypatch):
+def human_page(session, offline, reason):
+    text = {"LOGIN": "Login obrigatório", "CAPTCHA": "Resolva o CAPTCHA",
+            "VERIFICATION_CODE": "Código de verificação obrigatório", "PERSONAL_DATA": "CPF obrigatório"}[reason]
+    session.agent.browser.page["text"] = text
+    offline[2]["blocker"] = {"kind": "human", "reason": reason, "description": text, "evidence": [text]}
+    return text
+
+
+def test_blocked_checks_evidence_and_resume_observes_current_page(session, monkeypatch, offline):
+    initial = human_page(session, offline, "CAPTCHA")
     monkeypatch.setattr(agent, "choose", lambda *_a, **_kw: {
         "choice": "BLOCKED", "operation": "BLOCKED", "target": None, "latency_ms": 1,
         "probabilities": {"BLOCKED": 1}, "confidence": 1, "usage": {}})
     view = send(session)
     assert view["chat_status"] == "paused" and view["manual"]["suggested"]
-    assert [c["kind"] for c in session.calls] == ["request"]
+    assert [c["kind"] for c in session.calls] == ["request", "blocker"]
     token = take(session)
     calls = len(session.calls)
     session.manual.input(event(session, token))
@@ -166,7 +176,7 @@ def test_blocked_requests_intervention_without_helper_and_resume_observes_curren
         "probabilities": {"DONE": 1}, "confidence": 1, "usage": {}})
     session.manual.end({"owner_token": token, "resume": True})
     session.worker.join(3)
-    assert session.phase == "completed" and session.initial_page["text"] == "Pronta"
+    assert session.phase == "completed" and session.initial_page["text"] == initial
     assert session.agent.state["page"]["fingerprint"] == "human-completed"
     assert session.messages[-1]["verification"]["satisfied"] and session.agent.browser.mutations == []
     before = session.snapshot()["timing"]
@@ -368,10 +378,12 @@ def blocked(reason):
 @pytest.mark.parametrize("answers, phase", [
     (["OTHER", "DONE"], "completed"),  # a vague block that had a way forward: the user is never asked
     ([None, "DONE"], "completed"),
-    (["OTHER", "OTHER"], "paused"),  # still blocked after reconsidering: ask the user
+    (["OTHER", "OTHER"], "paused"),  # pause technically, without asking for control
     (["CAPTCHA"], "paused"),  # only the user can solve it: ask at once
 ])
-def test_vague_block_is_reconsidered_once_before_asking_the_user(session, monkeypatch, answers, phase):
+def test_vague_block_is_reconsidered_once_before_asking_the_user(session, monkeypatch, offline, answers, phase):
+    if answers == ["CAPTCHA"]:
+        human_page(session, offline, "CAPTCHA")
     feedback = []
 
     def choose(*_a, verification_feedback=None, **_kw):
@@ -386,12 +398,13 @@ def test_vague_block_is_reconsidered_once_before_asking_the_user(session, monkey
     send(session)
     session.worker.join(3)
     assert session.phase == phase and len(feedback) == len(answers)
-    assert any(m.get("kind") == "handoff" for m in session.messages) is (phase == "paused")
+    assert any(m.get("kind") == "handoff" for m in session.messages) is (answers == ["CAPTCHA"])
     assert feedback[0] is None and all(item[-1] == chat.RECONSIDER_BLOCKED for item in feedback[1:])
     assert session.agent.browser.mutations == []
 
 
-def test_handoff_card_names_the_reason_and_continue_resumes_automatically(session, monkeypatch):
+def test_handoff_card_names_the_reason_and_continue_resumes_automatically(session, monkeypatch, offline):
+    human_page(session, offline, "CAPTCHA")
     monkeypatch.setattr(agent, "choose", blocked("CAPTCHA"))
     view = send(session)
     card = view["messages"][-1]
@@ -414,7 +427,8 @@ def test_handoff_card_names_the_reason_and_continue_resumes_automatically(sessio
     assert session.messages[-2]["content"] == "Continuar com Jev"
 
 
-def test_exit_manual_keeps_the_task_paused(session, monkeypatch):
+def test_exit_manual_keeps_the_task_paused(session, monkeypatch, offline):
+    human_page(session, offline, "LOGIN")
     monkeypatch.setattr(agent, "choose", blocked("LOGIN"))
     send(session)
     token = take(session)
@@ -423,7 +437,8 @@ def test_exit_manual_keeps_the_task_paused(session, monkeypatch):
     assert session.agent.state["history"][-1]["kind"] == "manual"
 
 
-def test_value_only_the_user_has_opens_the_personal_data_handoff(session, monkeypatch):
+def test_value_only_the_user_has_opens_the_personal_data_handoff(session, monkeypatch, offline):
+    human_page(session, offline, "PERSONAL_DATA")
     from jev_ultrafast import agent as loop
     monkeypatch.setattr(loop, "field_text", lambda _context: (_ for _ in ()).throw(
         chat.MissingValue("Goal does not supply this field's value; nothing typed.")))
@@ -441,6 +456,6 @@ def test_no_progress_asks_for_help_instead_of_finishing(session, monkeypatch):
     session.agent.state["stop_reason"] = "repeated two-action loop"
     session._run()
     card = session.messages[-1]
-    assert session.phase == "paused" and card["kind"] == "handoff" and card["handoff"] == {"code": "STUCK"}
-    assert session.agent.state["status"] == "ready" and session.agent.state["stop_reason"] is None
+    assert session.phase == "paused" and card["kind"] == "technical_pause" and "handoff" not in card
+    assert session.agent.state["status"] == "ready"
 

@@ -141,6 +141,9 @@ def offline(monkeypatch):
             if config["bad_safety"] or config["bad_safety_once"]:
                 output["effect"] = "invented"
                 config["bad_safety_once"] = False
+        elif kind == "blocker":
+            output = config.get("blocker", {"kind": "recover", "reason": "OTHER",
+                                            "description": "Continue pela página.", "evidence": []})
         elif kind == "verify":
             confirmed = not config["false_verdict"]
             output = config["verify_sequence"].pop(0) if config["verify_sequence"] else {
@@ -929,7 +932,7 @@ def test_invalid_safety_result_fails_before_mutation(offline):
     offline[2]["bad_safety"] = True
     session = chat.ChatSession("https://example.org")
     view = send(session)
-    assert view["chat_status"] == "error"
+    assert view["chat_status"] == "paused" and view["messages"][-1]["kind"] == "technical_pause"
     assert not session.agent.browser.mutations
     assert view["chat_calls"][-1]["status"] == "error"
 

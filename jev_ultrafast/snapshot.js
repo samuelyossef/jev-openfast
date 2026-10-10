@@ -112,7 +112,11 @@
   actions.push({id:'wait',kind:'wait',label:'Wait for the page to update'});
   const human_fields=[...document.querySelectorAll('input,iframe')]
     .filter(e=>(e.tagName==='IFRAME' || privacy?.sensitive(e)) && visible(e))
-    .map(e=>clean(name(e)||e.getAttribute('title')||e.type||'iframe')).slice(0,12);
+    .map(e=>({label:clean(name(e)||e.getAttribute('title')||e.type||'iframe'),
+      type:e.tagName==='IFRAME'?'frame':e.type,
+      purpose:e.tagName==='IFRAME'?'embedded content (not proof of CAPTCHA)':
+        privacy?.purpose(e)||'protected field',
+      autocomplete:clean(e.autocomplete||'')})).slice(0,12);
   return {url:currentUrl(),title:clean(document.title),w:innerWidth,h:innerHeight,text,
     protected:privacy?.protected() || false,human_fields,
     scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};

@@ -60,7 +60,7 @@ function controls() {
   $("new-session").disabled = busy || active || manual;
   $("message").disabled = busy || active || awaiting || manual;
   $("send").disabled = $("message").disabled || !$("message").value.trim();
-  $("composer-hint").textContent = "Enter envia · Shift + Enter quebra a linha";
+  $("composer-hint").textContent = state?.pending_input ? "Responda à pergunta no chat para continuar a mesma tarefa." : "Enter envia · Shift + Enter quebra a linha";
   $("stop").hidden = !["thinking", "running"].includes(state?.chat_status);
   $("stop").disabled = busy;
   $("resume").hidden = state?.chat_status !== "paused";
@@ -109,6 +109,14 @@ function renderChat() {
     const content = document.createElement("p");
     content.textContent = message.content || "Pensando…";
     article.append(name, content);
+    if (message.kind === 'input' && state.pending_input && message === state.messages.at(-1)) {
+      const hint=document.createElement('p'); hint.textContent='Responda no chat. Não envie senhas ou códigos.';
+      const cancel=document.createElement('button'); cancel.type='button'; cancel.textContent='Cancelar pergunta';
+      const requestId=state.pending_input.id;
+      cancel.disabled=busy;
+      cancel.addEventListener('click',()=>perform(()=>call('input',{request_id:requestId,cancel:true})));
+      article.append(hint,cancel);
+    }
     if (message.verification) {
       const badge = document.createElement("span");
       badge.className = `verification ${message.verification.satisfied ? "verified" : "unverified"}`;
@@ -252,10 +260,12 @@ $("chat-form").addEventListener("submit", (event) => {
   const message = $("message").value.trim();
   if (!message || $("send").disabled) return;
   const messageId = crypto.randomUUID();
+  const input = state?.pending_input;
   perform(async () => {
-    await call("message", { message, message_id: messageId });
+    if (input) await call('input', {value:message,request_id:input.id});
+    else await call("message", { message, message_id: messageId });
   }, "Entendendo seu pedido…").finally(() => {
-    if (state?.messages?.some((entry) => entry.turn_id === messageId)) $("message").value = "";
+    if (state?.messages?.some((entry) => input ? entry.input_request_id === input.id : entry.turn_id === messageId)) $("message").value = "";
     controls();
   });
 });

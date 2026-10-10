@@ -150,6 +150,8 @@ class ChatSession:
             "Página aberta. Envie uma tarefa ou uma pergunta." if self.agent else "Descreva o que deseja fazer."
         )
         self.pending = None
+        self.pending_input = None
+        self.input_ids = set()
         self.approved_commitment = False
         self.recovery_attempts = 0
         self.reconsidered_block = False
@@ -168,7 +170,8 @@ class ChatSession:
         session.messages = record["messages"]
         session.message_ids = {message["turn_id"] for message in session.messages if message.get("turn_id")}
         session.last_url = record["last_url"]
-        if record["phase"] in {"thinking", "running", "verifying", "awaiting_confirmation", "paused", "manual"}:
+        if record["phase"] in {"thinking", "running", "verifying", "awaiting_confirmation",
+                               "awaiting_input", "paused", "manual"}:
             interruption = (
                 "A execução foi interrompida. Envie um novo pedido para continuar; "
                 "ações anteriores não serão repetidas."
@@ -272,6 +275,7 @@ class ChatSession:
             "chat_status": self.phase,
             "progress": self.progress,
             "approval": approval,
+            "pending_input": self.pending_input,
             "chat_calls": self.calls,
             "turns": self.turns,
             "initial_page": self.initial_page,
@@ -321,16 +325,22 @@ class ChatSession:
             # An interrupted mutation is never replayed, even if its result could not be observed.
             if self.agent:
                 self.agent.state["decision"] = None
-            self.phase = "error"
-            self.turn_finished = time.perf_counter()
-            self.progress = "A tarefa parou e precisa de atenção."
-            self._reply(
-                f"A tarefa parou: {str(error).rstrip('.')}. "
-                "As ações já executadas não serão repetidas automaticamente.",
-                kind="error",
-                verification={"satisfied": False, "evidence": []},
-            )
-            self._publish()
+            uncertain = self.agent and any(h["execution"] in {"requested", "uncertain"}
+                                           for h in self.agent.state["history"])
+            text = (f"A tarefa parou: {str(error).rstrip('.')}. "
+                    "As ações já executadas não serão repetidas automaticamente.")
+            if self.agent and self.phase in {"running", "verifying"} and not uncertain:
+                stage = "finish" if self.phase == "verifying" else "run"
+                self.agent.state["status"] = "ready"
+                self.agent.state["stop_reason"] = str(error)
+                self._paused(text, stage=stage, kind="technical_pause", pause_code="failure",
+                             verification={"satisfied": False, "evidence": []})
+            else:
+                self.phase = "error"
+                self.turn_finished = time.perf_counter()
+                self.progress = "A tarefa parou e precisa de atenção."
+                self._reply(text, kind="error", verification={"satisfied": False, "evidence": []})
+                self._publish()
         finally:
             self._release_browser()
             self.manual.activate()
@@ -412,6 +422,8 @@ class ChatSession:
         if message_id in self.message_ids:
             return
         self._check_idle()
+        if self.pending_input:
+            raise ValueError("Responda ou cancele a pergunta pendente antes de enviar outra tarefa.")
         if self.pending:
             raise ValueError("Confirme ou recuse a ação pendente antes de enviar outra mensagem.")
         if self.turn_id:
@@ -560,6 +572,96 @@ class ChatSession:
         self.manual.reason = HANDOFF[code]
         self._paused(HANDOFF[code], kind="handoff", handoff={"code": code})
 
+    def _resolve_blocker(self, page, action=None):
+        context = self._context()
+        if action is not None:
+            context["missing_field"] = {key: action.get(key) for key in ("label", "role")}
+        before = len(self.calls)
+        with self.timings.measure("helper_blocker"):
+            try:
+                assessment = assistant.assess_blocker(context, self.calls)
+            finally:
+                for call in self.calls[before:]:
+                    call["turn_id"] = self.turn_id
+        if not self.agent.browser.fresh(page, action):
+            assessment = {**assessment, "kind": "recover"}
+        if self.pause_requested.is_set():
+            self._paused()
+            return True
+        if assessment["kind"] == "human":
+            self._handoff(assessment["reason"])
+            return True
+        if assessment["kind"] == "input":
+            self.pending_input = {"id": secrets.token_urlsafe(24), "field": action["label"],
+                                  "description": assessment["description"]}
+            self.agent.state["decision"] = None
+            self.agent.state["status"] = "ready"
+            self.agent.pending_text = None
+            self.phase, self.progress = "awaiting_input", assessment["description"]
+            self._reply(assessment["description"], kind="input")
+            self._publish()
+            return True
+        if self.reconsidered_block:
+            self.agent.state["decision"] = None
+            self.agent.state["status"] = "ready"
+            self._paused("Não encontrei uma ação segura para avançar. A tarefa está pausada; "
+                         "use Continuar para observar a página novamente.",
+                         kind="technical_pause", pause_code="no_action")
+            return True
+        self.reconsidered_block = True
+        self.agent.state["verification_feedback"] = [
+            *(self.agent.state.get("verification_feedback") or []), RECONSIDER_BLOCKED]
+        self.agent.pending_text = None
+        self.agent.state["decision"] = None
+        self.agent.state["page"] = self.agent.browser.observe(screenshot=False)
+        self.agent.state["status"] = "ready"
+        return False
+
+    def input(self, body):
+        with self.manual.lock:
+            with self.lock:
+                self._input(body)
+
+    def _input(self, body):
+        request_id = body.get("request_id")
+        if not isinstance(request_id, str) or not request_id:
+            raise ValueError("Identificador da pergunta inválido.")
+        if request_id in self.input_ids:
+            return
+        self._check_idle()
+        if not self.pending_input or self.pending_input["id"] != request_id or self.phase != "awaiting_input":
+            raise ValueError("Esta pergunta não está mais ativa.")
+        cancel = body.get("cancel", False)
+        if type(cancel) is not bool:
+            raise ValueError("Cancelamento inválido.")
+        value = body.get("value")
+        if not cancel and (not isinstance(value, str) or not 0 < len(value.strip()) <= 2000 or "\x00" in value):
+            raise ValueError("Informe um valor válido para o campo.")
+        field = self.pending_input["field"]
+        self.input_ids.add(request_id)
+        self.pending_input = None
+        if cancel:
+            self._approval_reply("Pergunta cancelada.")
+            self._paused("Pergunta cancelada. A tarefa está pausada.")
+            return
+        value = value.strip()
+        supplied = {"role": "user", "content": f"{field}: {value}"}
+        self.conversation.append(supplied)
+        self._approval_reply(supplied["content"])
+        self.messages[-2].update(kind="input_reply", input_request_id=request_id)
+        self.agent.state["conversation"] = copy.deepcopy(self.conversation)
+        self.agent.pending_text = None
+        self.agent.state["decision"] = None
+        self.agent.state["status"] = "ready"
+        self.reconsidered_block = False
+        self.phase, self.progress = "running", "Continuando com a informação fornecida…"
+        self._publish()
+        self._launch(self._resume_run)
+
+    def _resume_run(self):
+        self.agent.state["page"] = self.agent.browser.observe(screenshot=False)
+        self._run()
+
     def _run(self):
         self.phase = "running"
         stale_attempts = 0
@@ -589,18 +691,9 @@ class ChatSession:
                     self.agent.state["status"] = "done"
                     break
                 if decision["choice"] == "BLOCKED":
-                    reason = decision.get("blocked_reason")
-                    if reason not in HUMAN_ONLY and not self.reconsidered_block:
-                        # A BLOCKED without a human-only reason usually hides a way forward (an interstitial,
-                        # a notice, a retry). Choose once more before asking the user to take control.
-                        self.reconsidered_block = True
-                        self.agent.state["verification_feedback"] = [
-                            *(self.agent.state.get("verification_feedback") or []), RECONSIDER_BLOCKED]
-                        self.agent.state["decision"] = None
-                        self.agent.state["status"] = "ready"
-                        continue
-                    self._handoff(reason)
-                    return
+                    if self._resolve_blocker(page):
+                        return
+                    continue
                 if decision["choice"] not in {"DONE", "BLOCKED"}:
                     action = next(a for a in page["actions"] if a["id"] == decision["choice"])
                     if action["kind"] in {"click", "fill", "select", "press_enter"}:
@@ -656,9 +749,9 @@ class ChatSession:
                 self.agent.command("act", {"fingerprint": page["fingerprint"]})
                 stale_attempts = 0
             except MissingValue:
-                # Nothing was typed: the goal does not contain this field's value, so the user must provide it.
-                self._handoff("PERSONAL_DATA")
-                return
+                if self._resolve_blocker(page, action):
+                    return
+                continue
             except StalePage:
                 # Reobserve and choose anew. An already logged mutation is never repeated.
                 self.agent.state["decision"] = None
@@ -678,8 +771,11 @@ class ChatSession:
             self._paused()
             return
         if self.agent.state["status"] == "blocked":
-            # No progress: the user can unblock the page and the run continues.
-            self._handoff("STUCK")
+            reason = self.agent.state.get("stop_reason") or "Não foi possível avançar nesta página."
+            self.agent.state["decision"] = None
+            self.agent.state["status"] = "ready"
+            self._paused(f"A tarefa foi pausada por falta de progresso: {reason}. Use Continuar para tentar novamente.",
+                         kind="technical_pause", pause_code="no_progress")
             return
         self._finish()
 
@@ -768,6 +864,8 @@ class ChatSession:
     def navigate_user(self, body):
         """The preview's address bar and Back/Forward/Reload, between tasks. The user is the one acting."""
         self._check_idle()
+        if self.pending_input:
+            raise ValueError("Responda ou cancele a pergunta pendente antes de navegar.")
         action, url = validate_navigation(body)
         if self.agent is None and action != "url":
             raise ValueError("Nenhuma página aberta para navegar.")
@@ -887,9 +985,10 @@ class ChatSession:
         self._check_idle()
         if self.phase != "paused":
             raise ValueError("Não há uma tarefa pausada para continuar.")
+        self.reconsidered_block = False
         self.phase, self.progress = "running", "Continuando a tarefa…"
         self._publish()
-        self._launch({"begin": self._begin, "finish": self._finish}.get(self.resume_stage, self._run))
+        self._launch({"begin": self._begin, "finish": self._finish}.get(self.resume_stage, self._resume_run))
 
     def close(self):
         self._check_idle()

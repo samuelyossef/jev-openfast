@@ -4,9 +4,19 @@
   let locationText=location.href, locationRevision=1;
   const editable = e => e && (['INPUT','TEXTAREA'].includes(e.tagName) || e.isContentEditable);
   const value = e => String(e.value ?? e.innerText ?? '');
-  const sensitive = e => e?.type === 'password' || /one-time-code|current-password|new-password/.test(e?.autocomplete || '') ||
-    (e?.tagName==='INPUT' && /otp|verification.?code|c[oó]digo|(?:^|[-_ ])code(?:$|[-_ ])/i.test(
-      [e.id,e.name,e.getAttribute('aria-label'),e.placeholder].join(' ')));
+  const purpose = e => {
+    if(e?.tagName!=='INPUT')return null;
+    const autocomplete=e.autocomplete||'';
+    const label=[e.id,e.name,e.getAttribute('aria-label'),e.placeholder,...[...(e.labels||[])].map(l=>l.textContent)].join(' ');
+    if(e.type==='password'||/current-password|new-password/.test(autocomplete))return 'password';
+    if(/one-time-code/.test(autocomplete)||/otp|verification.?code|security.?code|authentication.?code|2fa|one.?time.?code|c[oó]digo (?:de )?(?:verifica[cç][aã]o|seguran[cç]a|autentica[cç][aã]o)/i.test(label))return 'verification code';
+    if(['text','email'].includes(e.type)&&(/(?:^|\s)username(?:$|\s)/.test(autocomplete)||e.form?.querySelector('input[type="password"]')))return 'login identity';
+    if(/(?:^|\s)cc-/.test(autocomplete))return 'payment data';
+    if(e.type==='file')return 'document upload';
+    if(/\b(?:cpf|ssn|passport|passaporte|social security|tax[-_ ]?id)\b/i.test(label))return 'identity document';
+    return null;
+  };
+  const sensitive = e => Boolean(purpose(e));
   const remember = text => { if (text) secrets.add(String(text)); };
   const scrub = input => {
     let text = String(input ?? '');
@@ -50,7 +60,7 @@
     url(location.href);
   };
   window.__jevPrivacy = {
-    manual:false, scrub, url, collect, value:privateValue, sensitive,
+    manual:false, scrub, url, collect, value:privateValue, sensitive, purpose,
     locationVersion() { if(locationText!==location.href) { locationText=location.href;locationRevision++; } return locationRevision; },
     protected:()=>secrets.size>0 || [...document.querySelectorAll('input')].some(sensitive),
     protect:()=>mark(document.activeElement),

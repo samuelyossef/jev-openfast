@@ -7,6 +7,8 @@ type Message = {
   role: 'user' | 'assistant';
   content: string;
   turn_id?: string;
+  input_request_id?: string;
+  pause_code?: string;
   kind?: string;
   handoff?: { code: string };
   verification?: { satisfied: boolean; stale?:boolean; evidence: string[]; reason?: string; checked_at?: number; url?: string;
@@ -36,6 +38,7 @@ type Snapshot = {
   last_url?: string | null;
   page?: { url: string; title: string; screenshot?: string; w: number; h: number; actions: Action[] } | null;
   approval?: { id: string; description: string; label: string; url: string; operation: string } | null;
+  pending_input?: { id: string; field: string; description: string } | null;
   decision?: Decision | null;
   decisions?: Decision[];
   elements?: Element[];
@@ -191,7 +194,9 @@ function MessageCard({ message, progress, onRecheck, rechecking, actions }: { me
       <strong>{t('handoffTitle')}</strong>
       <p>{t(handoffKeys[message.handoff?.code as keyof typeof handoffKeys] ?? 'handoffOTHER')}</p>
       {actions}
-    </div> : <div className="msg-text">{message.content || <span className="msg-pending">{t('stateThinking')}… {progress && <span className="msg-progress" role="status">{progress}</span>}</span>}</div>}
+    </div> : message.kind === 'input' ? <div className="approval-card" role="status"><strong>{t('inputTitle')}</strong><p>{message.content}</p><p>{t('inputHint')}</p>{actions}</div>
+      : message.kind === 'technical_pause' ? <div className="msg-text" role="status"><strong>{t(message.pause_code === 'failure' ? 'technicalFailure' : 'technicalPause')}</strong><p>{message.content}</p></div>
+        : <div className="msg-text">{message.content || <span className="msg-pending">{t('stateThinking')}… {progress && <span className="msg-progress" role="status">{progress}</span>}</span>}</div>}
     {message.verification && <div className={`verification ${message.verification.satisfied ? 'verified' : 'unverified'}`}>
       {message.verification.stale ? t('staleVerification') : message.verification.satisfied ? t('confirmed') : t('unconfirmed')}
     </div>}
@@ -311,7 +316,7 @@ function ExecutionSidebar({ state }: { state: Snapshot }) {
   const selectedElement = state.elements?.find((element) => element.index === targetIndex);
   const targetLabel = selectedElement?.label || decision?.target || decision?.choice || '—';
   const targetOption = decision?.target?.includes(':') ? decision.target.split(':').slice(1).join(':') : '';
-  const statusLabels: Record<string, string> = { thinking: t('stateThinking'), running: t('stateThinking'), verifying: t('stateVerifying'), paused: t('statePaused'), awaiting_confirmation: t('stateConfirmation'), answered: t('stateAnswered'), completed: t('stateCompleted'), error: t('stateError'), idle: t('stateIdle') };
+  const statusLabels: Record<string, string> = { thinking: t('stateThinking'), running: t('stateThinking'), verifying: t('stateVerifying'), paused: t('statePaused'), awaiting_confirmation: t('stateConfirmation'), awaiting_input: t('stateInput'), answered: t('stateAnswered'), completed: t('stateCompleted'), error: t('stateError'), idle: t('stateIdle') };
   const statusClass = activePhases.has(state.chat_status) ? 'is-active' : state.chat_status === 'paused' ? 'is-paused' : state.chat_status === 'awaiting_confirmation' ? 'is-waiting' : state.chat_status === 'error' ? 'is-error' : ['answered', 'completed'].includes(state.chat_status) ? 'is-complete' : '';
   return <aside className="execution-sidebar" id="execution-details" aria-label={t('executionDetails')}>
       <div className="execution-sidebar-head sb-top"><div className="execution-heading"><strong>{t('executionDetails')}</strong></div></div>
@@ -581,8 +586,10 @@ function App() {
     const message = draft.trim();
     if (!message || disabled) return;
     const messageId = crypto.randomUUID();
-    const done = await perform('message', { message, message_id: messageId, ...(!stateRef.current?.session_id ? viewportRef.current : {}) });
-    if (done || stateRef.current?.messages?.some((item) => item.turn_id === messageId))
+    const input = stateRef.current?.pending_input;
+    const done = input ? await perform('input', { value: message, request_id: input.id })
+      : await perform('message', { message, message_id: messageId, ...(!stateRef.current?.session_id ? viewportRef.current : {}) });
+    if (done || stateRef.current?.messages?.some((item) => input ? item.input_request_id === input.id : item.turn_id === messageId))
       setDraft((current) => current === submittedDraft ? '' : current);
   }
 
@@ -593,7 +600,7 @@ function App() {
   }
 
   function confirmDiscard() {
-    if (state?.chat_status === 'awaiting_confirmation' || state?.chat_status === 'paused')
+    if (state?.chat_status === 'awaiting_confirmation' || state?.chat_status === 'awaiting_input' || state?.chat_status === 'paused')
       return window.confirm(t('discardPending'));
     return true;
   }
@@ -728,7 +735,9 @@ function App() {
               progress={index === state.messages.length - 1 && (activePhases.has(state.chat_status) || state.chat_status === 'answered') ? state.progress : undefined}
               actions={index === state.messages.length - 1 && message.kind === 'handoff'
                 ? <ManualPanel state={state} frame={capture} host={null} onState={manualState} inline onStart={() => setMobileView('preview')} />
-                : undefined} />)}
+                : index === state.messages.length - 1 && message.kind === 'input' && state.pending_input
+                  ? <button type="button" disabled={busy} onClick={() => { void perform('input', { request_id: state.pending_input?.id, cancel: true }); }}>{t('cancelInput')}</button>
+                  : undefined} />)}
             {state?.approval && <div className="approval-card"><strong>{t('confirmAction')}</strong><p>{state.approval.description}</p><small>{state.approval.url}</small><div className="approval-actions"><button disabled={busy} onClick={() => perform('reject', { approval_id: state.approval!.id })}>{t('reject')}</button><button className="primary-button" disabled={busy} onClick={() => perform('approve', { approval_id: state.approval!.id })}>{t('confirmAction')}</button></div></div>}
           </div></div>
           <Composer value={draft} onChange={setDraft} onSend={send} disabled={disabled} overlays={overlays} onOverlaysChange={setOverlays}
