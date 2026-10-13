@@ -802,6 +802,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .settings-panel .group, .settings-menu .group { margin: 8px 10px 4px; font-size: 10px; letter-spacing: .08em; color: var(--muted); }
 .settings-panel .group { margin: 22px 0 4px; }
 .settings-panel .settings-card { margin: 0; max-width: none; }
+.about-card h2 { margin: 0; font-size: 24px; }
+.about-card .about-description { max-width: 56ch; margin: 9px 0 24px; line-height: 1.6; }
+.about-meta { margin: 0; border-top: 1px solid var(--border); }
+.about-meta div { display: flex; justify-content: space-between; gap: 20px; padding: 13px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.about-meta dt { color: var(--muted); }
+.about-meta dd { margin: 0; }
+.about-links { display: flex; flex-wrap: wrap; gap: 20px; margin-top: 20px; font-size: 13px; }
+.about-links a { color: var(--accent); text-decoration: none; }
+.about-links a:hover { text-decoration: underline; }
+.about-footer { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
 .srow { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 24px; font-size: 13px; }
 .seg { display: flex; flex-wrap: wrap; background: var(--accent-soft); border-radius: 8px; padding: 2px; }
 .seg button { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
@@ -810,7 +820,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
 .switch:checked { background: var(--accent); }
 .switch:checked::after { transform: translateX(12px); }
-@media (max-width: 640px) { .settings-menu { display: none; } .srow { flex-wrap: wrap; } }
+@media (max-width: 640px) {
+  .settings-layout { display: block; }
+  .settings-menu { width: 100%; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 10px 12px; }
+  .settings-menu .group, .settings-sign { display: none; }
+  .settings-menu button { flex: none; white-space: nowrap; }
+  .settings-panel { padding: 18px 15px; }
+  .srow { flex-wrap: wrap; }
+}
 
 @media (min-width: 901px) and (max-width: 1131px) {
   .jev-app[data-details="open"] { grid-template-columns: 256px minmax(320px, 1fr) var(--preview-width); }

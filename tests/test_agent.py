@@ -628,6 +628,35 @@ def test_changed_field_context_does_not_reuse_generated_text(runner, monkeypatch
     assert helper.call_count == 2
 
 
+@pytest.mark.parametrize("changed", ["url", "field_context"])
+def test_text_cache_includes_url_and_field_scope(runner, monkeypatch, changed):
+    helper = Mock(return_value=("book", {"model": "test", "latency_ms": 10}))
+    monkeypatch.setattr(loop, "field_text", helper)
+    observed = runner.state["page"]
+    action = observed["actions"][0]
+    action["context"] = "Departure city"
+    runner.prepare_text(action, observed)
+    runner.prepare_text(action, observed)
+    assert helper.call_count == 1
+    if changed == "url":
+        observed["url"] = "https://example.test/return"
+    else:
+        action["context"] = "Arrival city"
+    runner.prepare_text(action, observed)
+    assert helper.call_count == 2
+
+
+def test_observation_limits_and_field_scope_reach_helpers():
+    observed = page()
+    observed.update(text_truncated=True, omitted_actions=10)
+    action = observed["actions"][0]
+    action["context"] = "Arrival city"
+    context = model.field_context("Find flights", action, observed, [])
+    assert context["page"]["url"] == observed["url"]
+    assert context["page"]["observation_limits"] == {"text_truncated": True, "omitted_actions": 10}
+    assert context["field"]["context"] == "Arrival city"
+
+
 def test_loading_waits_do_not_trigger_no_progress_stop(runner):
     for _ in range(5):
         runner.state["decision"] = decision("wait")
@@ -644,14 +673,15 @@ def test_repeated_two_action_cycle_stops_early(runner):
     first["fingerprint"] = fingerprint(first)
     second["fingerprint"] = fingerprint(second)
     runner.state["page"] = first
-    runner.state["browser"].observe.side_effect = [second, first] * 3
-    for index, action in enumerate(["e3", "e4"] * 3):
+    runner.state["browser"].observe.side_effect = [second, first] * 2
+    for index, action in enumerate(["e3", "e4"] * 2):
         runner.state["decision"] = decision(action)
         runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
-        if index < 5:
+        if index < 3:
             assert runner.state["status"] == "ready"
     assert runner.state["status"] == "blocked"
     assert runner.state["stop_reason"] == "repeated two-action loop"
+    assert len(runner.state["history"]) == 4
 
 
 def test_stale_observation_preserves_executed_action(runner):

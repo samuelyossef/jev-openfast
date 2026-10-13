@@ -397,6 +397,39 @@ def test_stalled_progress_checks_outcome_without_repeating_mutations(offline, mo
     assert session.recovery_attempts == 0
 
 
+@pytest.mark.parametrize(
+    "goal, listing, price_status, price_evidence, satisfied",
+    [
+        ("Busque livros de colorir infantis de R$15 a R$25",
+         "Resultados: Livro de colorir infantil — R$ 19,90", "confirmed",
+         ["Livro de colorir infantil", "R$ 19,90"], True),
+        ("Busque livros de colorir infantis de R$15 a R$25",
+         "Resultados: Livro de colorir infantil — R$ 29,90", "not_met", ["R$ 29,90"], False),
+        ("Aplique um filtro de R$15 a R$25 aos livros de colorir infantis",
+         "Resultados: Livro de colorir infantil — R$ 19,90", "unknown", [], False),
+    ],
+)
+def test_price_search_stall_checks_fresh_results_without_more_clicks(
+    offline, goal, listing, price_status, price_evidence, satisfied,
+):
+    session = chat.ChatSession("https://example.org/results")
+    session.goal = session.task = goal
+    session.agent.browser.page.update(text=listing, fingerprint=listing)
+    offline[2]["verify_sequence"] = [{"satisfied": satisfied, "checks": [
+        {"requirement": "Busca", "status": "confirmed", "evidence": ["Resultados"], "reason": "Busca enviada."},
+        {"requirement": "Preço", "status": price_status, "evidence": price_evidence,
+         "reason": "Preço observado." if price_status != "unknown" else "Filtro não confirmado."},
+    ]}]
+
+    session._finish(allow_recovery=False, pause_reason="repeated two-action loop")
+
+    view = session.snapshot()
+    assert view["chat_status"] == ("completed" if satisfied else "paused")
+    assert session.agent.browser.observations >= 2
+    assert not session.agent.browser.mutations
+    assert session.agent.state["status"] == ("done" if satisfied else "idle")
+
+
 def test_manual_interrupt_during_stall_verification_resumes_run(offline, monkeypatch):
     session = chat.ChatSession("https://example.org")
     def verify():
@@ -618,6 +651,52 @@ def test_two_tasks_reuse_tab_and_pass_conversation(offline):
     assert first_verification["page"]["text"] == "Resultado disponível"
 
 
+def test_context_keeps_older_user_references_and_excludes_confirmations():
+    messages = [{"role": "user", "content": "Minha cidade é Recife", "turn_id": "origin"}]
+    for i in range(20):
+        messages.extend([{"role": "user", "content": f"Pedido {i}", "turn_id": str(i)},
+                         {"role": "assistant", "content": f"Resposta {i}", "turn_id": str(i)}])
+    messages.append({"role": "user", "content": "Confirmar publicação", "kind": "confirmation"})
+    context = chat.conversation_context(messages)
+    assert context[0] == {"role": "user", "content": "Minha cidade é Recife", "source_turn_id": "origin"}
+    assert sum(item["role"] == "user" for item in context) == 21
+    assert sum(item["role"] == "assistant" for item in context) == 6
+    assert not any(item["content"] == "Confirmar publicação" for item in context)
+
+
+def test_context_budget_preserves_opening_request_and_latest_correction():
+    messages = [{"role": "user", "content": "Cidade: Recife", "turn_id": "origin"}]
+    messages.extend({"role": "user", "content": str(i) + "x" * 1990, "turn_id": str(i)} for i in range(30))
+    messages.append({"role": "user", "content": "Corrigindo: cidade Salvador", "turn_id": "correction"})
+    context = chat.conversation_context(messages)
+    assert sum(len(item["content"]) for item in context) <= 18000
+    assert context[0]["source_turn_id"] == "origin"
+    assert context[-1]["source_turn_id"] == "correction"
+
+
+def test_request_uses_fresh_page_context_and_reports_limits(offline):
+    calls, _, _ = offline
+    session = chat.ChatSession("https://example.org")
+    session.agent.browser.page.update(text="Conteúdo atualizado", text_truncated=True, omitted_actions=15)
+    send(session, "?O que aparece nesta página?")
+    request = next(context for kind, context in calls if kind == "request")
+    assert request["page"]["text"] == "Conteúdo atualizado"
+    assert request["current_url"] == request["page"]["url"] == "https://example.org"
+    assert request["page"]["observation_limits"] == {"text_truncated": True, "omitted_actions": 15}
+    assert not session.agent.browser.mutations
+
+
+def test_restored_chat_retains_older_user_context(offline):
+    messages = [{"role": "user", "content": "Destino: Recife", "turn_id": "origin"}]
+    messages.extend({"role": "assistant", "content": f"Resposta {i}", "turn_id": str(i)} for i in range(15))
+    session = chat.ChatSession.restore({"id": "restored", "messages": messages,
+                                        "phase": "completed", "last_url": "https://example.org"})
+    send(session, "Busque o destino que informei", "new")
+    request = next(context for kind, context in offline[0] if kind == "request")
+    assert request["conversation"][0]["content"] == "Destino: Recife"
+    assert request["page"] is None
+
+
 def test_first_message_opens_site_and_followup_navigates_same_tab(offline):
     session = chat.ChatSession()
     assert session.snapshot()["page"] is None
@@ -669,7 +748,7 @@ def test_question_observes_fresh_page_without_acting(offline):
     view = send(session, "? O que aparece nesta página?")
     assert view["chat_status"] == "answered"
     assert view["messages"][-1]["content"] == "Conteúdo novo da página"
-    assert session.agent.browser.observations == 2
+    assert session.agent.browser.observations == 3  # Initial page, request classification, then fresh answer.
     assert not session.agent.browser.mutations and not decisions
 
 
@@ -818,6 +897,16 @@ def test_content_completion_prompts_require_detail_page_without_changing_list_go
     assert "Mark the content requirement not_met" in assistant.PROMPTS["verify"]
     assert "recency needs visible supporting evidence" in assistant.PROMPTS["verify"]
     assert "do not choose DONE again" in NEXT_ACTION
+
+
+def test_price_search_prompts_distinguish_visible_matches_from_applied_filters():
+    from jev_ultrafast.questions import NEXT_ACTION
+
+    assert "visible matching items priced within that range" in NEXT_ACTION
+    assert "explicitly asks to filter" in NEXT_ACTION
+    assert "Do not cycle through preset ranges" in NEXT_ACTION
+    assert "visibly associated prices" in assistant.PROMPTS["verify"]
+    assert "Do not claim the entire result list is filtered" in assistant.PROMPTS["verify"]
 
 
 def test_approved_commitment_never_gets_corrective_mutation(offline):

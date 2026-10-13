@@ -11,6 +11,15 @@ Operation and target questions receive the same next-step rules. Target criteria
 
 TYPE_TEXT sends the goal, selected field, visible page context, and recent actions to a small LLM. Its JSON must contain exactly one valid `text` value. The code does not extract quoted literals. A value can be reused after a stale decision only while the entire helper input is identical, and is discarded after a successful mutation.
 
+Conversation context retains original user messages (18,000 characters) and up to six recent assistant
+replies (6,000 characters), in chronological order with source turn IDs. The opening user message is
+retained as an anchor; newer corrections take precedence. Confirmation messages are excluded so approval
+cannot carry into a new task. Context is reconstructed from stored messages after restoring a conversation;
+older messages beyond the budget may be omitted. No extra model call or generated memory is used.
+Request classification receives a fresh observation of an existing tab. Editable fields include scrubbed
+form or nearby container context and the page URL. Text truncation and omitted controls are reported to models;
+these limits are missing information, never evidence of absence or completion.
+
 ## Runtime
 
 An observed dialog can offer `PRESS_ESCAPE` through its own target head. Covered elements are omitted from the observation; execution still checks the live target before input. A technical stall triggers a final read-only outcome check before pausing, without corrective mutations.
