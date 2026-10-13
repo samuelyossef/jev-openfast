@@ -224,7 +224,9 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
         "model": os.environ.get("TYPESAFE_MODEL", "typesafe/jev-1.13"),
         "state": {
             "page": {**{k: state[k] for k in ("url", "title", "text")},
-                     "human_fields": state.get("human_fields", [])},
+                     "human_fields": state.get("human_fields", []),
+                     "observation_limits": {"text_truncated": state.get("text_truncated", False),
+                                            "omitted_actions": state.get("omitted_actions", 0)}},
             "elements": elements,
             "recent_actions": [
                 {k: h.get(k) for k in ("action", "kind", "text", "page_changed", "execution", "skip_reason", "url")}
@@ -290,8 +292,10 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
 def field_context(goal, action, page, history):
     return {
         "goal": goal,
-        "field": {k: action.get(k) for k in ("label", "role", "value")},
-        "page": {"title": page["title"], "text": page["text"][:6000]},
+        "field": {k: action.get(k) for k in ("label", "role", "value", "context")},
+        "page": {"url": page["url"], "title": page["title"], "text": page["text"][:6000],
+                 "observation_limits": {"text_truncated": page.get("text_truncated", False),
+                                        "omitted_actions": page.get("omitted_actions", 0)}},
         "recent_actions": [
             {k: h.get(k) for k in ("action", "text")}
             for h in history if h.get("execution", "executed") == "executed"

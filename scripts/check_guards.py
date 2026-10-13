@@ -263,6 +263,20 @@ def main():
         else:
             raise AssertionError("Forward past the newest page must not navigate")
         passed.append("Back, Forward and Reload wait for the resulting document")
+        browser.navigate("data:text/html," + quote(
+            "<style>button{width:20px;height:20px;padding:0}</style>"
+            "<form><h2>Departure city</h2><label>City<input></label></form>"
+            "<p style='white-space:nowrap'>" + "x" * 6001 + "</p>"
+            + "".join(f"<button>{i}</button>" for i in range(260))))
+        observed = browser.observe(screenshot=False)
+        field = next(a for a in observed["actions"] if a["kind"] == "fill")
+        assert "Departure city" in field["context"]
+        assert len(observed["text"]) <= 6000 and observed["text_truncated"]
+        assert observed["omitted_actions"] > 0
+        browser.evaluate("document.body.innerHTML='<p style=white-space:nowrap></p>';"
+                         "document.querySelector('p').textContent='x'.repeat(6000)")
+        assert not browser.observe(screenshot=False)["text_truncated"]
+        passed.append("field scope and truncation limits come from the observed document")
     finally:
         browser.close()
     check_tabs(passed)

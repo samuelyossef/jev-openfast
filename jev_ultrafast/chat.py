@@ -109,6 +109,24 @@ def frozen(view):
     return copied
 
 
+def conversation_context(messages):
+    """Keep original user references longer than assistant replies, within a character budget."""
+    selected = {}
+    for role, budget in (("user", 18000), ("assistant", 6000)):
+        eligible = [(i, msg) for i, msg in enumerate(messages)
+                    if msg["role"] == role and msg.get("kind") not in {"confirmation", "pending"}
+                    and msg["content"].strip()]
+        # Preserve the opening request as an anchor, then prefer the most recent corrections.
+        ordered = eligible[:1] + eligible[:0:-1] if role == "user" else eligible[-6:][::-1]
+        for i, msg in ordered:
+            content = msg["content"]
+            if len(content) > budget:
+                continue
+            selected[i] = {"role": role, "content": content, "source_turn_id": msg.get("turn_id")}
+            budget -= len(content)
+    return [selected[i] for i in sorted(selected)]
+
+
 class ChatSession:
     def __init__(self, url=None, on_change=None, viewport=None):
         self.id = secrets.token_urlsafe(18)
@@ -444,7 +462,7 @@ class ChatSession:
                     "timing": self.snapshot()["timing"],
                 }
             )
-        self.conversation = [{"role": msg["role"], "content": msg["content"][:4000]} for msg in self.messages[-12:]]
+        self.conversation = conversation_context(self.messages)
         self.goal = self.task = value
         self.locale = locale
         self.turn_started = time.perf_counter()
@@ -492,6 +510,8 @@ class ChatSession:
             pool.shutdown(wait=False)
         opened = False
         try:
+            if self.agent:
+                self.agent.state["page"] = self.agent.browser.observe(screenshot=False)
             route = self._ask(
                 "request",
                 {
@@ -499,6 +519,7 @@ class ChatSession:
                     "response_language": LANGUAGES[self.locale],
                     "conversation": self.conversation,
                     "current_url": self.agent.state["page"]["url"] if self.agent else None,
+                    "page": assistant.page_context(self.agent.state["page"]) if self.agent else None,
                 },
             )
             # The restatement drives navigation; final verification keeps the original requirements.

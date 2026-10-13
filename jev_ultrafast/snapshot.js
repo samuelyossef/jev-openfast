@@ -94,6 +94,10 @@
       const editable=!e.readOnly && e.getAttribute('aria-readonly')!=='true' &&
         (['textbox','searchbox','spinbutton'].includes(rname) ||
           (rname==='combobox' && ['INPUT','TEXTAREA'].includes(e.tagName)));
+      if (editable) {
+        const scope=e.closest('form,dialog,[role="dialog"],article,li,tr,[role="row"]') || e.parentElement;
+        base.context=clean(scope?.innerText || '').slice(0,2000);
+      }
       const value=privacy && ('value' in e || e.isContentEditable) ? privacy.value(e) : 'value' in e ? String(e.value) :
         e.isContentEditable || rname==='combobox' ? e.innerText.trim() : '';
       actions.push({...base,kind:editable?'fill':'click',value});
@@ -102,13 +106,14 @@
     }
   }
   const words=[], walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
-  const range=document.createRange(); let node,length=0;
-  while ((node=walker.nextNode()) && length<6000) {
+  const range=document.createRange(); let node,length=0,text_truncated=false;
+  while ((node=walker.nextNode())) {
     const value=node.textContent.trim(), parent=node.parentElement;
     if (!value || !parent || parent.closest('script,style,noscript,template') || !visible(parent)) continue;
     range.selectNodeContents(node); const r=range.getBoundingClientRect();
     if (r.width>0 && r.height>0 && r.bottom>0 && r.top<innerHeight && r.right>0 && r.left<innerWidth) {
-      words.push(value); length+=value.length;
+      words.push(value); length+=value.length+(words.length>1?1:0);
+      if (length>6000) { text_truncated=true; break; }
     }
   }
   const text=clean(words.join('\n').slice(0,6000)), height=document.documentElement.scrollHeight;
@@ -132,6 +137,6 @@
         privacy?.purpose(e)||'protected field',
       autocomplete:clean(e.autocomplete||'')})).slice(0,12);
   return {url:currentUrl(),title:clean(document.title),w:innerWidth,h:innerHeight,text,
-    protected:privacy?.protected() || false,human_fields,
+    protected:privacy?.protected() || false,human_fields,text_truncated,
     scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};
 })()
