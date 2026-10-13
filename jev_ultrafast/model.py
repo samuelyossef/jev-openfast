@@ -4,6 +4,7 @@ import json
 import math
 import os
 import time
+from collections import Counter
 
 import httpx
 
@@ -115,7 +116,7 @@ def action_space(actions):
     """One index per observed element; each operation has its own valid target choices."""
     elements, indices, targets, controls = [], {}, {}, {}
     operations = {"click": "CLICK", "fill": "TYPE_TEXT", "select": "SELECT",
-                  "press_enter": "PRESS_ENTER"}
+                  "press_enter": "PRESS_ENTER", "press_escape": "PRESS_ESCAPE"}
     for action in actions:
         kind = action["kind"]
         if kind not in operations:
@@ -159,6 +160,16 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
     # A self-link without a fragment cannot advance navigation; keep real anchors and pagination.
     actions = [a for a in state["actions"] if not (
         a.get("navigation") is not False and a.get("href") == state["url"] and "#" not in a["href"])]
+    # Reconsider another operation instead of repeating an ineffective click on the same observation.
+    last_manual = max((i for i, h in enumerate(history) if h.get("kind") == "manual"), default=-1)
+    ineffective = {h["node"] for h in history[last_manual + 1:] if h.get("execution") == "executed"
+                   and h.get("kind") == "click" and h.get("page_changed") is False
+                   and h.get("fingerprint") == state["fingerprint"] and h.get("node") is not None}
+    actions = [a for a in actions if not (a["kind"] == "click" and a.get("node") in ineffective)]
+    navigations = Counter(h.get("href") for h in history if h.get("execution") == "executed"
+                          and h.get("source_url") == state["url"] and h.get("href"))
+    actions = [a for a in actions if not (a.get("href") and a.get("navigation") is not False
+               and "#" not in a["href"] and navigations[a["href"]] >= 2)]
     for previous in reversed(history):
         if previous.get("execution") == "executed" and previous.get("search_submit"):
             actions = [a for a in actions if not (
@@ -171,15 +182,20 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
         "TYPE_TEXT": "Enter or replace text using the text model for the selected field.",
         "SELECT": "Select an observed dropdown value.",
         "PRESS_ENTER": "Press Enter in an observed single-line field to submit or accept its current value.",
+        "PRESS_ESCAPE": "Dismiss an observed dialog with Escape to reach the content behind it.",
     }
     operations = {key: labels[key] for key in targets}
     operations.update({key: value["label"] for key, value in controls.items()})
     operations.update(DONE="Every requirement is visibly satisfied.", BLOCKED="No supported operation can progress.")
+    instructions = f"Goal: {goal}\n{NEXT_ACTION}"
+    if verification_feedback:
+        instructions += "\nObtain current evidence for these unmet requirements before DONE: " + json.dumps(
+            verification_feedback, ensure_ascii=False)
     questions = {
         "operation": {
             "type": "choice",
             "criteria": operations,
-            "instructions": f"Goal: {goal}\n{NEXT_ACTION}",
+            "instructions": instructions,
         }
     }
     for operation, candidates in targets.items():
@@ -196,7 +212,7 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
                 )
                 for index, a in candidates.items()
             },
-            "instructions": f"Goal: {goal}\nOperation: {operation}\n{NEXT_ACTION}\n{TARGET}",
+            "instructions": f"{instructions}\nOperation: {operation}\n{TARGET}",
         }
     # Speculative like the target heads: consumed only when the operation is BLOCKED.
     questions["blocked_reason"] = {

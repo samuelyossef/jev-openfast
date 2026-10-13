@@ -13,6 +13,8 @@ TYPE_TEXT sends the goal, selected field, visible page context, and recent actio
 
 ## Runtime
 
+An observed dialog can offer `PRESS_ESCAPE` through its own target head. Covered elements are omitted from the observation; execution still checks the live target before input. A technical stall triggers a final read-only outcome check before pausing, without corrective mutations.
+
 One browser-side DOM snapshot supplies common HTML/ARIA roles, names, values, visible text, and executable targets. A WeakMap gives each actual node a code-owned identity; a Map keeps the live references used for execution. Replaced elements receive new identities, disconnected references are pruned, and navigation starts a new cache. These IDs are not CDP backend node IDs. Geometry is always read again immediately before input.
 
 The model sees visible text. Background focus emulation keeps animation frames running in the owned tab. Screenshots are optional and disabled in library calls by default; `screenshots=True` or `record_dir=...` enables them. The chat preview enables them explicitly. A continuous screencast can record a run separately.

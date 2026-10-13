@@ -81,7 +81,7 @@ def main():
         passed.append("observed search values and scrubbed link destinations identify already applied navigation")
         page = browser.observe(screenshot=False)
         action = next(a for a in page["actions"] if a["label"] == "Continue")
-        browser.evaluate("document.querySelector('#target').style.transform='translateX(200px)'")
+        browser.evaluate("document.querySelector('#target').style.transform='translateY(150px)'")
         assert browser.fresh(page), "Movement should use fresh geometry, not another model call"
         assert not browser.preview_fresh(page), "An image must not reuse labels from the previous geometry"
         assert browser.preview_fresh(browser.observe(screenshot=False))
@@ -117,11 +117,12 @@ def main():
                          "document.querySelector('#target').style.display='block'")
         page = browser.observe(screenshot=False)
         action = next(a for a in page["actions"] if a["label"] == "Delete account")
-        # A textless overlay does not alter the model's semantic state, but must block a click.
+        # Covered controls must disappear from the next observation and remain blocked before input.
         browser.evaluate("const cover=document.createElement('div'); "
                          "cover.style.cssText='position:fixed;inset:0;z-index:9999;background:white'; "
                          "document.body.append(cover)")
-        assert browser.fresh(page)
+        assert not browser.fresh(page)
+        assert not any(a.get("node") == action["node"] for a in browser.observe(screenshot=False)["actions"])
         try:
             browser.act(action, page)
         except (RuntimeError, StalePage):
@@ -235,6 +236,17 @@ def main():
         result = browser.observe(screenshot=False)
         assert "Result for books" in result["text"]
         passed.append("Enter submits a buttonless search and its result is observed")
+
+        browser.evaluate("const popup=document.createElement('dialog'); popup.setAttribute('aria-label','Information');"
+                         "popup.textContent='Optional information'; document.body.append(popup); popup.showModal()")
+        modal = browser.observe(screenshot=False)
+        escape = next(a for a in modal["actions"] if a["kind"] == "press_escape")
+        assert not any(a["kind"] == "press_enter" for a in modal["actions"])
+        browser.act(escape, modal)
+        dismissed = browser.observe_settled()
+        assert not any(a["kind"] == "press_escape" for a in dismissed["actions"])
+        assert any(a["kind"] == "press_enter" for a in dismissed["actions"])
+        passed.append("an observed dialog hides covered fields and Escape dismisses it without clicking")
 
         browser.navigate("data:text/html," + quote("<title>Second</title>"))
         browser.history_step(-1)

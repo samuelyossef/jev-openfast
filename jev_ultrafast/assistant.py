@@ -85,6 +85,10 @@ A channel, profile, listing, thumbnail or featured-content preview is not that f
 Mark the content requirement not_met if only such an intermediate page is open, even when it
 shows a matching title. Explicit requests to search or list results may end on a listing.
 Do not equate a featured item with the latest item; recency needs visible supporting evidence.
+An upload date, relative age or matching title alone cannot prove the most recent release.
+For latest/newest, require an explicit statement identifying the latest/current release, or visible
+chronological comparison/order that establishes it. Otherwise mark that constraint unknown,
+even on an open detail page.
 For externally committed actions, require a visible confirmation of the committed result.
 Compare with initial_page: a preexisting confirmation does not prove a newly requested commitment.
 Return satisfied=false when evidence is incomplete, ambiguous, hidden or still loading.

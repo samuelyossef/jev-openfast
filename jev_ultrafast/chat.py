@@ -719,7 +719,7 @@ class ChatSession:
                     continue
                 if decision["choice"] not in {"DONE", "BLOCKED"}:
                     action = next(a for a in page["actions"] if a["id"] == decision["choice"])
-                    if action["kind"] in {"click", "fill", "select", "press_enter"}:
+                    if action["kind"] in {"click", "fill", "select", "press_enter", "press_escape"}:
                         if not self.agent.browser.fresh(page, action):
                             raise StalePage("Target changed before safety assessment")
                         self.progress = f"Verificando o efeito de: {action['label']}"
@@ -784,11 +784,15 @@ class ChatSession:
                 executed_after = sum(item["execution"] == "executed" for item in self.agent.state["history"])
                 stale_attempts = stale_attempts + 1 if executed_after == executed_before else 0
                 if stale_attempts >= 3:
-                    self._paused(
+                    reason = (
                         "A página mudou antes da ação em três tentativas seguidas. "
                         "A execução foi pausada para evitar novas chamadas sem progresso. "
                         "Use Continuar quando estiver pronta."
                     )
+                    if executed_after and not self.pause_requested.is_set():
+                        self._finish(allow_recovery=False, pause_reason=reason)
+                    else:
+                        self._paused(reason)
                     return
             self._publish()
         if self.pause_requested.is_set():
@@ -798,14 +802,15 @@ class ChatSession:
             reason = self.agent.state.get("stop_reason") or "Não foi possível avançar nesta página."
             self.agent.state["decision"] = None
             self.agent.state["status"] = "ready"
-            self._paused(f"A tarefa foi pausada por falta de progresso: {reason}. Use Continuar para tentar novamente.",
-                         kind="technical_pause", pause_code="no_progress")
+            self._finish(allow_recovery=False, pause_reason=(
+                f"A tarefa foi pausada por falta de progresso: {reason}. Use Continuar para tentar novamente."
+            ))
             return
         self._finish()
 
-    def _finish(self, allow_recovery=True):
+    def _finish(self, allow_recovery=True, *, pause_reason=None):
         if self.manual.status == "requested":
-            self._paused(stage="finish")
+            self._paused(stage="run" if pause_reason else "finish")
             return
         self._apply_viewport()
         self.phase, self.progress = "verifying", "Conferindo o resultado na página…"
@@ -822,7 +827,10 @@ class ChatSession:
                        "reason": "A página mudou durante a conferência. Verifique o resultado novamente."}
         checks = verdict.get("checks", [])
         if self.manual.status == "requested":
-            self._paused(stage="finish")
+            self._paused(stage="run" if pause_reason else "finish")
+            return
+        if pause_reason and (not verdict["satisfied"] or self.pause_requested.is_set()):
+            self._paused(pause_reason, kind="technical_pause", pause_code="no_progress")
             return
         history = self.agent.state["history"]
         if (
@@ -846,6 +854,7 @@ class ChatSession:
             return
         if verdict["satisfied"]:
             response = verdict["reply"]
+            self.agent.state["status"] = "done"
             self.agent.state["plan_index"] = 1
         if not verdict["satisfied"]:
             response = "Não consegui confirmar que seu pedido foi concluído na página. Confira o resultado observado."

@@ -87,6 +87,8 @@ def test_enter_uses_its_own_observed_target_and_verification_feedback(monkeypatc
 
     def post(_url, _key, body):
         assert body["state"]["verification_feedback"] == [{"requirement": "Show results", "reason": "Missing"}]
+        for head in ("operation", "press_enter_target"):
+            assert '"requirement": "Show results"' in body["questions"][head]["instructions"]
         return {"model": "test", "answers": {
             "operation": choice(body["questions"]["operation"]["criteria"], "PRESS_ENTER"),
             "press_enter_target": choice(body["questions"]["press_enter_target"]["criteria"], "1"),
@@ -118,6 +120,40 @@ def test_enter_dispatches_once_to_observed_field(monkeypatch):
     assert [key["type"] for key in keys] == ["keyDown", "keyUp"]
     assert all(key["key"] == "Enter" for key in keys)
     assert len([1 for method, _ in calls if method == "Input.dispatchMouseEvent"]) == 2
+
+
+def test_escape_uses_an_observed_dialog_target(monkeypatch):
+    p = page()
+    p["actions"].append({"id": "dialog", "node": 30, "kind": "press_escape", "role": "dialog",
+                         "label": "Dismiss dialog with Escape: Information"})
+    def post(_url, _key, body):
+        assert "PRESS_ESCAPE" in body["questions"]["operation"]["criteria"]
+        return {"model": "test", "answers": {
+            "operation": choice(body["questions"]["operation"]["criteria"], "PRESS_ESCAPE"),
+            "press_escape_target": choice(body["questions"]["press_escape_target"]["criteria"], "3"),
+            "click_target": {"choice": "invalid"},
+        }}
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", post)
+    assert model.choose(p, "Read the description", [])["choice"] == "dialog"
+
+
+def test_escape_dispatches_once_without_clicking_dialog(monkeypatch):
+    from jev_ultrafast import browser
+    calls = []
+    def cdp(method, **params):
+        calls.append((method, params))
+        if method == "Runtime.evaluate":
+            assert "dialog,[role=" in params["expression"]
+            return {"result": {"value": {"x": 30, "y": 40}}}
+        return {}
+    monkeypatch.setattr(browser, "cdp", cdp)
+    browser_operation({"operation": "act", "session": "test",
+                       "action": {"id": "dialog", "kind": "press_escape", "node": 10}})
+    keys = [params for method, params in calls if method == "Input.dispatchKeyEvent"]
+    assert [key["type"] for key in keys] == ["keyDown", "keyUp"]
+    assert all(key["key"] == "Escape" for key in keys)
+    assert not any(method == "Input.dispatchMouseEvent" for method, _ in calls)
 
 
 def test_all_heads_are_one_request_and_only_matching_head_executes(monkeypatch):
@@ -397,6 +433,52 @@ def test_applied_search_is_not_resubmitted_until_values_change(monkeypatch, new_
                                         "form_values": ["book"], "url": p["url"]}])
 
 
+@pytest.mark.parametrize("changed,execution,manual,offered", [
+    (False, "executed", False, False), (True, "executed", False, True),
+    (False, "not_executed", False, True), (False, "uncertain", False, True),
+    (False, "executed", True, True),
+])
+def test_ineffective_click_is_not_offered_again_on_identical_page(monkeypatch, changed, execution, manual, offered):
+    p = page()
+    p["actions"][0]["value"] = "book"
+    p["actions"].insert(2, {"id": "enter", "kind": "press_enter", "label": "Press Enter in Search",
+                            "role": "textbox", "value": "book", "node": 10})
+    history = [{"execution": execution, "kind": "click", "node": 20, "page_changed": False,
+                "fingerprint": "older-page" if changed else p["fingerprint"]}]
+    if manual:
+        history.append({"kind": "manual", "execution": "executed"})
+
+    def post(_url, _key, body):
+        assert ("Go" in [e["label"] for e in body["state"]["elements"]]) is offered
+        assert "PRESS_ENTER" in body["questions"]["operation"]["criteria"]
+        target = body["questions"]["press_enter_target"]
+        assert json.loads(target["criteria"]["1"])["current_value"] == "book"
+        assert "For PRESS_ENTER, choose the populated field" in target["instructions"]
+        return {"model": "test", "answers": {
+            "operation": choice(body["questions"]["operation"]["criteria"], "PRESS_ENTER"),
+            "press_enter_target": choice(target["criteria"], "1"),
+            "click_target": {"choice": "ignored"},
+        }}
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", post)
+    assert model.choose(p, "Find a book", history)["choice"] == "enter"
+
+
+def test_executed_click_records_observed_identity_before_input(runner):
+    p = runner.state["page"]
+    runner.state["decision"] = decision("e3")
+
+    def act(*_args, **_kwargs):
+        entry = runner.state["history"][-1]
+        assert entry["execution"] == "requested"
+        assert entry["node"] == 20 and entry["fingerprint"] == p["fingerprint"]
+
+    runner.state["browser"].act.side_effect = act
+    runner.command("act", {"fingerprint": p["fingerprint"]})
+    assert runner.state["history"][-1]["execution"] == "executed"
+
+
 def test_repeated_navigation_is_stopped_before_another_mutation(runner):
     p = runner.state["page"]
     p["actions"][1]["href"] = "https://example.test/destination"
@@ -407,6 +489,48 @@ def test_repeated_navigation_is_stopped_before_another_mutation(runner):
     runner.state["browser"].act.assert_not_called()
     assert runner.state["status"] == "blocked"
     assert "Repeated navigation" in runner.state["stop_reason"]
+
+
+def test_navigation_at_repeat_limit_is_removed_before_decision(monkeypatch):
+    p = page()
+    destination = "https://example.test/destination"
+    p["actions"][1].update(href=destination, navigation=True)
+    p["actions"].append({"id": "anchor", "kind": "click", "label": "Section", "node": 30,
+                         "href": destination + "#section"})
+    history = [{"execution": "executed", "href": destination, "source_url": p["url"]} for _ in range(2)]
+
+    def post(_url, _key, body):
+        labels = [e["label"] for e in body["state"]["elements"]]
+        assert "Go" not in labels and "Section" in labels
+        return {"model": "test", "answers": {
+            "operation": choice(body["questions"]["operation"]["criteria"], "DONE")}}
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", post)
+    model.choose(p, "Find a book", history)
+
+
+def test_latest_requires_more_than_title_and_upload_age():
+    from jev_ultrafast.assistant import PROMPTS
+
+    assert "title and upload age alone are insufficient" in NEXT_ACTION
+    assert "matching title alone cannot prove the most recent release" in PROMPTS["verify"]
+    assert "Otherwise mark that constraint unknown" in PROMPTS["verify"]
+
+
+def test_recovery_feedback_reaches_text_helper_and_invalidates_cached_input(runner, monkeypatch):
+    helper = Mock(return_value=("book", {"model": "test", "latency_ms": 1}))
+    monkeypatch.setattr(loop, "field_text", helper)
+    p = runner.state["page"]
+    feedback = [{"requirement": "Latest release", "reason": "That release is old"}]
+    runner.state["verification_feedback"] = feedback
+    runner.prepare_text(p["actions"][0], p)
+    assert helper.call_args.args[0]["verification_feedback"] == feedback
+    runner.prepare_text(p["actions"][0], p)
+    assert helper.call_count == 1
+    feedback[0]["reason"] = "Another requirement remains"
+    runner.prepare_text(p["actions"][0], p)
+    assert helper.call_count == 2
 
 
 @pytest.mark.parametrize("kind", ["click", "fill", "select"])

@@ -94,6 +94,8 @@ class Agent:
         context = field_context(self.state["goal"], action, page, self.state["history"])
         if self.state.get("conversation"):
             context["conversation"] = self.state["conversation"]
+        if self.state.get("verification_feedback"):
+            context["verification_feedback"] = [dict(item) for item in self.state["verification_feedback"]]
         if self.pending_text and self.pending_text[0] == context:
             _, text, helper = self.pending_text
         else:
@@ -221,6 +223,8 @@ class Agent:
             "page_changed": None,
             "url": page["url"],
             "source_url": page["url"],
+            "node": action.get("node"),
+            "fingerprint": page["fingerprint"],
             **{k: action[k] for k in ("href", "search_submit", "form_values") if k in action},
             "usage": decision["usage"],
             "executed_ms": None,

@@ -27,13 +27,14 @@
       e.getAttribute('title') || e.getAttribute('placeholder') || '';
   };
   const roles=['button','link','checkbox','radio','switch','tab','menuitem','menuitemradio',
-    'option','gridcell','combobox','textbox','searchbox','spinbutton'];
-  const selector='a[href],button,input,textarea,select,summary,[contenteditable="true"],'+
+    'option','gridcell','combobox','textbox','searchbox','spinbutton','dialog','alertdialog'];
+  const selector='a[href],button,input,textarea,select,summary,dialog,[contenteditable="true"],'+
     roles.map(role=>'[role="'+role+'"]').join(',');
   const role = e => {
     const explicit=e.getAttribute('role');
     if (roles.includes(explicit)) return explicit;
     if (e.tagName==='BUTTON' || e.tagName==='SUMMARY') return 'button';
+    if (e.tagName==='DIALOG') return 'dialog';
     if (e.tagName==='A') return 'link';
     if (e.tagName==='SELECT') return 'combobox';
     if (e.tagName==='TEXTAREA' || e.isContentEditable) return 'textbox';
@@ -63,6 +64,7 @@
     if (!safe(e) || !visible(e) || e.matches(':disabled') || e.closest('[aria-disabled="true"]')) continue;
     const r=e.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2, rname=role(e);
     if (!rname || r.width<=0 || r.height<=0 || x<0 || y<0 || x>=innerWidth || y>=innerHeight) continue;
+    if (!e.contains(document.elementFromPoint(x,y))) continue;
     if (rname==='gridcell' && e.querySelector('button,[role="button"]')) continue;
     const base={node:identity(e),role:rname,label:clean(name(e)||rname),
       rect:{x:r.x,y:r.y,w:r.width,h:r.height}};
@@ -82,7 +84,9 @@
       if (value!==null) base[key]=value;
     }
     if (['checkbox','radio'].includes(e.type)) base.checked=String(e.checked);
-    if (e.tagName==='SELECT') {
+    if (['dialog','alertdialog'].includes(rname)) {
+      actions.push({...base,kind:'press_escape',label:'Dismiss dialog with Escape: '+base.label});
+    } else if (e.tagName==='SELECT') {
       for (const o of e.options) if (!o.selected && !o.disabled && !o.closest('optgroup[disabled]'))
         actions.push({...base,kind:'select',value:clean(o.value),
           current_value:clean([...e.selectedOptions].map(o=>o.label).join(', ')),label:base.label+' → '+clean(o.label)});

@@ -370,6 +370,45 @@ def test_repeated_stale_targets_pause_before_more_paid_helpers(offline, monkeypa
     assert len(session.agent.browser.mutations) == 1
 
 
+@pytest.mark.parametrize("confirmed", [True, False])
+@pytest.mark.parametrize("stall", ["stale", "unchanged"])
+def test_stalled_progress_checks_outcome_without_repeating_mutations(offline, monkeypatch, confirmed, stall):
+    session = chat.ChatSession("https://example.org")
+    offline[2]["false_verdict"] = not confirmed
+    def choose(page, goal, history, **kwargs):
+        offline[1].append({"goal": goal, "history": copy.deepcopy(history), **kwargs})
+        return {"choice": "e1", "operation": "CLICK", "target": "1", "probabilities": {"e1": 1},
+                "confidence": 1, "latency_ms": 1, "usage": {}}
+    monkeypatch.setattr(agent, "choose", choose)
+    if stall == "stale":
+        monkeypatch.setattr(session.agent.browser, "fresh",
+                            lambda page, action=None: action is None or not session.agent.browser.mutations)
+    else:
+        def act(action, page, text=None):
+            session.agent.browser.mutations.append((action["id"], text))
+            session.agent.browser.page.update(text="Resultado disponível", fingerprint="initial")
+        monkeypatch.setattr(session.agent.browser, "act", act)
+    view = send(session)
+    assert view["chat_status"] == ("completed" if confirmed else "paused")
+    assert session.agent.state["status"] == ("done" if confirmed else "ready")
+    assert len(session.agent.browser.mutations) == (1 if stall == "stale" else 3)
+    assert len(offline[1]) == (4 if stall == "stale" else 3)
+    assert sum(kind == "verify" for kind, _ in offline[0]) == 1
+    assert session.recovery_attempts == 0
+
+
+def test_manual_interrupt_during_stall_verification_resumes_run(offline, monkeypatch):
+    session = chat.ChatSession("https://example.org")
+    def verify():
+        session.manual.status = "requested"
+        return {"satisfied": True, "evidence": [], "checks": [], "reply": "Resultado"}
+    monkeypatch.setattr(session, "_verify", verify)
+    session._finish(allow_recovery=False, pause_reason="Sem progresso")
+    assert session.phase == "paused"
+    assert session.resume_stage == "run"
+    assert not session.agent.browser.mutations
+
+
 def test_paused_request_clock_stops_and_resumes(offline, monkeypatch):
     session = chat.ChatSession("https://example.org")
     monkeypatch.setattr(session.agent.browser, "fresh", lambda page, action=None: action is None)
@@ -820,19 +859,23 @@ def test_enter_requires_confirmation_and_stale_target_is_not_retried(offline, mo
     assert not session.agent.browser.mutations
 
 
-def test_uncertain_enter_is_logged_once_without_retry(offline, monkeypatch):
+@pytest.mark.parametrize("kind,operation,role", [
+    ("press_enter", "PRESS_ENTER", "textbox"), ("press_escape", "PRESS_ESCAPE", "dialog"),
+])
+def test_uncertain_keyboard_action_is_logged_once_without_retry(offline, monkeypatch, kind, operation, role):
     monkeypatch.setattr(agent, "choose", lambda *_a, **_k: {
-        "choice": "e4", "operation": "PRESS_ENTER", "target": "1",
+        "choice": "e4", "operation": operation, "target": "1",
         "probabilities": {"e4": 1}, "confidence": 1, "latency_ms": 1, "usage": {},
     })
     session = chat.ChatSession("https://example.org")
-    session.agent.browser.page["actions"].append({"id": "e4", "node": 3, "kind": "press_enter",
-                                                    "role": "textbox", "label": "Press Enter in Título"})
+    session.agent.browser.page["actions"].append({"id": "e4", "node": 3, "kind": kind,
+                                                    "role": role, "label": "Keyboard action"})
     session.agent.browser.interrupt_action = True
     view = send(session)
     assert view["chat_status"] == "error"
     assert session.agent.browser.mutations == [("e4", None)]
     assert [item["execution"] for item in view["history"]] == ["uncertain"]
+    assert sum(name == "safety" for name, _ in offline[0]) == 1
 
 
 @pytest.mark.parametrize("status,evidence", [

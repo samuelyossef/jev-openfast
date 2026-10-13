@@ -13,7 +13,7 @@ a login, a CAPTCHA or a code.
 
 The model never writes selectors or code. Each page becomes a numbered table of elements; [TypeSafe's Jev](https://openrouter.ai/typesafe/jev-1.13),
 a structured decision model that answers typed questions with probabilities, returns an
-operation (`CLICK`, `TYPE_TEXT`, `SELECT`, `PRESS_ENTER`, `SCROLL_UP`, `SCROLL_DOWN`, `WAIT`, `DONE`, `BLOCKED`)
+operation (`CLICK`, `TYPE_TEXT`, `SELECT`, `PRESS_ENTER`, `PRESS_ESCAPE`, `SCROLL_UP`, `SCROLL_DOWN`, `WAIT`, `DONE`, `BLOCKED`)
 and a target from that table, and the code executes it. A small text model writes words only when the operation
 is `TYPE_TEXT`.
 
