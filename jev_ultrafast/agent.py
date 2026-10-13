@@ -281,9 +281,9 @@ class Agent:
         state["status"] = "blocked" if len(repeated) == 3 and all(unchanged) else "ready"
         if state["status"] == "blocked":
             state["stop_reason"] = "No page change after 3 actions"
-        recent = executed[-6:]
+        recent = executed[-4:]
         if (
-            len(recent) == 6
+            len(recent) == 4
             and all(h["kind"] == "click" for h in recent)
             and recent[0]["action"] != recent[1]["action"]
             and all(h["action"] == recent[i % 2]["action"] for i, h in enumerate(recent))

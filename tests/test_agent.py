@@ -673,14 +673,15 @@ def test_repeated_two_action_cycle_stops_early(runner):
     first["fingerprint"] = fingerprint(first)
     second["fingerprint"] = fingerprint(second)
     runner.state["page"] = first
-    runner.state["browser"].observe.side_effect = [second, first] * 3
-    for index, action in enumerate(["e3", "e4"] * 3):
+    runner.state["browser"].observe.side_effect = [second, first] * 2
+    for index, action in enumerate(["e3", "e4"] * 2):
         runner.state["decision"] = decision(action)
         runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
-        if index < 5:
+        if index < 3:
             assert runner.state["status"] == "ready"
     assert runner.state["status"] == "blocked"
     assert runner.state["stop_reason"] == "repeated two-action loop"
+    assert len(runner.state["history"]) == 4
 
 
 def test_stale_observation_preserves_executed_action(runner):

@@ -8,7 +8,10 @@ Observation limits mean content or controls were omitted; absence is not proof o
 Do not repeat satisfied steps or retype a field's current value. Fill required fields before submitting.
 Select an autocomplete suggestion only when the field requires choosing an offered item; free-text
 search queries can be submitted directly. For date pickers, CLICK the field, date, then confirmation.
-Set every requested filter/control; a matching result alone does not prove a requested filter was set.
+Set every explicitly requested filter/control; a matching result alone does not prove a requested filter was set.
+For a search/list goal with a price range, visible matching items priced within that range can satisfy
+the goal without an applied price filter. Require an applied filter when the user explicitly asks to filter.
+Do not cycle through preset ranges that cannot express the requested range.
 Do not toggle a checkbox, switch, or radio already in the requested state.
 Close or decline cookie banners, pop-ups and overlays that hide what the goal needs.
 Use PRESS_ESCAPE on an observed dialog when it hides the needed content and has no useful close button.

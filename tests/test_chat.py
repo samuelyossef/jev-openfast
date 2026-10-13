@@ -397,6 +397,39 @@ def test_stalled_progress_checks_outcome_without_repeating_mutations(offline, mo
     assert session.recovery_attempts == 0
 
 
+@pytest.mark.parametrize(
+    "goal, listing, price_status, price_evidence, satisfied",
+    [
+        ("Busque livros de colorir infantis de R$15 a R$25",
+         "Resultados: Livro de colorir infantil — R$ 19,90", "confirmed",
+         ["Livro de colorir infantil", "R$ 19,90"], True),
+        ("Busque livros de colorir infantis de R$15 a R$25",
+         "Resultados: Livro de colorir infantil — R$ 29,90", "not_met", ["R$ 29,90"], False),
+        ("Aplique um filtro de R$15 a R$25 aos livros de colorir infantis",
+         "Resultados: Livro de colorir infantil — R$ 19,90", "unknown", [], False),
+    ],
+)
+def test_price_search_stall_checks_fresh_results_without_more_clicks(
+    offline, goal, listing, price_status, price_evidence, satisfied,
+):
+    session = chat.ChatSession("https://example.org/results")
+    session.goal = session.task = goal
+    session.agent.browser.page.update(text=listing, fingerprint=listing)
+    offline[2]["verify_sequence"] = [{"satisfied": satisfied, "checks": [
+        {"requirement": "Busca", "status": "confirmed", "evidence": ["Resultados"], "reason": "Busca enviada."},
+        {"requirement": "Preço", "status": price_status, "evidence": price_evidence,
+         "reason": "Preço observado." if price_status != "unknown" else "Filtro não confirmado."},
+    ]}]
+
+    session._finish(allow_recovery=False, pause_reason="repeated two-action loop")
+
+    view = session.snapshot()
+    assert view["chat_status"] == ("completed" if satisfied else "paused")
+    assert session.agent.browser.observations >= 2
+    assert not session.agent.browser.mutations
+    assert session.agent.state["status"] == ("done" if satisfied else "idle")
+
+
 def test_manual_interrupt_during_stall_verification_resumes_run(offline, monkeypatch):
     session = chat.ChatSession("https://example.org")
     def verify():
@@ -864,6 +897,16 @@ def test_content_completion_prompts_require_detail_page_without_changing_list_go
     assert "Mark the content requirement not_met" in assistant.PROMPTS["verify"]
     assert "recency needs visible supporting evidence" in assistant.PROMPTS["verify"]
     assert "do not choose DONE again" in NEXT_ACTION
+
+
+def test_price_search_prompts_distinguish_visible_matches_from_applied_filters():
+    from jev_ultrafast.questions import NEXT_ACTION
+
+    assert "visible matching items priced within that range" in NEXT_ACTION
+    assert "explicitly asks to filter" in NEXT_ACTION
+    assert "Do not cycle through preset ranges" in NEXT_ACTION
+    assert "visibly associated prices" in assistant.PROMPTS["verify"]
+    assert "Do not claim the entire result list is filtered" in assistant.PROMPTS["verify"]
 
 
 def test_approved_commitment_never_gets_corrective_mutation(offline):

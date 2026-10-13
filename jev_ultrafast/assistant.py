@@ -83,6 +83,10 @@ replace any requirement in goal. Check the original goal even when resolved_task
 Each check has requirement, status (confirmed, not_met or unknown), exact evidence quotes and a short reason.
 confirmed requires visible proof; not_met means visible contradiction; unknown means insufficient proof.
 A filled search field is not submitted results. An offered option is not a selected filter.
+For a search/list goal with a price range, confirm relevant results with visibly associated prices
+inside the range; an applied filter is required only when the user explicitly asks to filter.
+Do not infer that every result is in range from a few matching items. If titles and prices cannot be
+associated from the observation, mark the price constraint unknown.
 For a goal to find a specific piece of content (video, article, document or product), require its
 open detail page with visible evidence of the requested topic, source and constraints.
 A channel, profile, listing, thumbnail or featured-content preview is not that final state.
@@ -146,6 +150,8 @@ PROPERTIES = {
 }
 
 PROMPTS["verify"] += """\nAlso write a concise reply in the user's language based only on these checks.
+For a successful product search with a price range, cite observed matching products and their prices.
+Do not claim the entire result list is filtered unless an applied filter is visible.
 When the goal asks a question, answer it in the reply using only the quoted page evidence.
 Claim completion only when every requirement has visible evidence and satisfied=true.
 If evidence is missing, explain what remains unconfirmed. Do not expose model configuration."""
