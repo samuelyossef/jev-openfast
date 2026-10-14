@@ -401,7 +401,7 @@ def test_vague_block_is_reconsidered_once_before_asking_the_user(session, monkey
 
     def choose(*_a, verification_feedback=None, **_kw):
         feedback.append(verification_feedback)
-        answer = answers[len(feedback) - 1]
+        answer = answers[min(len(feedback) - 1, len(answers) - 1)]
         if answer == "DONE":
             return {"choice": "DONE", "operation": "DONE", "target": None, "latency_ms": 1,
                     "probabilities": {"DONE": 1}, "confidence": 1, "usage": {}}

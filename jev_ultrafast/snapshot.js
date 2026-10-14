@@ -28,6 +28,17 @@
   };
   const roles=['button','link','checkbox','radio','switch','tab','menuitem','menuitemradio',
     'option','gridcell','combobox','textbox','searchbox','spinbutton','dialog','alertdialog'];
+  const scopeOf=e=>{
+    const semantic=e.closest('form,dialog,[role="dialog"],article,li,tr,[role="row"]');
+    if (semantic) return semantic;
+    let parent=e.parentElement;
+    for (let depth=0;parent && depth<4;depth++,parent=parent.parentElement) {
+      const text=parent.innerText||'';
+      if (text.length>2000) break;
+      if (parent.querySelector('a[href]') && /R\$\s*\d/.test(text)) return parent;
+    }
+    return e.parentElement===document.body || e.parentElement===document.documentElement ? e : e.parentElement;
+  };
   const selector='a[href],button,input,textarea,select,summary,dialog,[contenteditable="true"],'+
     roles.map(role=>'[role="'+role+'"]').join(',');
   const role = e => {
@@ -53,11 +64,13 @@
   cache.guard=e=>{
     if (!e?.isConnected || !visible(e)) return null;
     const scope=e.closest('form,dialog,[role="dialog"],article,li,tr,[role="row"]') || e.parentElement;
+    const form=e.form || e.closest('form');
     return [identity(e),role(e),clean(name(e)),currentValue(e),e.checked??null,e.selectedIndex??null,
       e.readOnly??null,e.matches(':disabled'),e.getAttribute('aria-disabled'),
       e.getAttribute('aria-expanded'),e.getAttribute('aria-checked'),e.getAttribute('aria-selected'),
       e.getAttribute('href') ? (privacy ? privacy.url(e.getAttribute('href')) : e.getAttribute('href')) : null,
-      clean(scope?.innerText?.slice(0,6000)||'')];
+      clean(scope?.innerText?.slice(0,6000)||''),
+      form ? [form.getAttribute('role'),form.method,clean(privacy ? privacy.url(form.action) : form.action)] : null];
   };
   const actions=[];
   for (const e of document.querySelectorAll(selector)) {
@@ -73,6 +86,10 @@
       base.navigation=typeof e.onclick!=='function';
     }
     const form=e.form || e.closest('form');
+    if (form) base.form={role:form.getAttribute('role')||'',method:form.method,
+      action:/^https?:/.test(form.action) ? clean(privacy ? privacy.url(form.action) : form.action) : null};
+    if (form && (e.tagName==='BUTTON' || e.tagName==='INPUT') && e.type==='submit')
+      base.form_submit=true;
     if (form && (form.getAttribute('role')==='search' || form.querySelector('input[type="search"],[role="searchbox"]')) &&
       ((e.tagName==='BUTTON' || e.tagName==='INPUT') && e.type==='submit')) {
       base.search_submit=true;
@@ -94,10 +111,6 @@
       const editable=!e.readOnly && e.getAttribute('aria-readonly')!=='true' &&
         (['textbox','searchbox','spinbutton'].includes(rname) ||
           (rname==='combobox' && ['INPUT','TEXTAREA'].includes(e.tagName)));
-      if (editable) {
-        const scope=e.closest('form,dialog,[role="dialog"],article,li,tr,[role="row"]') || e.parentElement;
-        base.context=clean(scope?.innerText || '').slice(0,2000);
-      }
       const value=privacy && ('value' in e || e.isContentEditable) ? privacy.value(e) : 'value' in e ? String(e.value) :
         e.isContentEditable || rname==='combobox' ? e.innerText.trim() : '';
       actions.push({...base,kind:editable?'fill':'click',value});
@@ -105,7 +118,7 @@
         actions.push({...base,kind:'press_enter',value,label:'Press Enter in '+base.label});
     }
   }
-  const words=[], walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+  const words=[], blocksByScope=new Map(), walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
   const range=document.createRange(); let node,length=0,text_truncated=false;
   while ((node=walker.nextNode())) {
     const value=node.textContent.trim(), parent=node.parentElement;
@@ -113,10 +126,21 @@
     range.selectNodeContents(node); const r=range.getBoundingClientRect();
     if (r.width>0 && r.height>0 && r.bottom>0 && r.top<innerHeight && r.right>0 && r.left<innerWidth) {
       words.push(value); length+=value.length+(words.length>1?1:0);
+      const scope=scopeOf(parent);
+      if (scope && blocksByScope.size<60 && scope!==document.body) {
+        if (!blocksByScope.has(scope)) blocksByScope.set(scope,[]);
+        blocksByScope.get(scope).push(value);
+      }
       if (length>6000) { text_truncated=true; break; }
     }
   }
   const text=clean(words.join('\n').slice(0,6000)), height=document.documentElement.scrollHeight;
+  const blocks=[...blocksByScope].map(([scope,words])=>({id:String(identity(scope)),
+    text:clean(words.join('\n')).slice(0,2000)})).filter(block=>block.text.trim());
+  for (const action of actions) {
+    const element=cache.nodes.get(action.node), scope=scopeOf(element);
+    action.context=clean((blocksByScope.get(scope)||[]).join('\n')).slice(0,1200);
+  }
   const page_key=cache.pageKey(), guards={};
   for (const a of actions) if (!(a.node in guards)) guards[a.node]=cache.guard(cache.nodes.get(a.node));
   // Compare meaning and identity. Geometry is always resolved and hit-tested just before input.
@@ -138,5 +162,5 @@
       autocomplete:clean(e.autocomplete||'')})).slice(0,12);
   return {url:currentUrl(),title:clean(document.title),w:innerWidth,h:innerHeight,text,
     protected:privacy?.protected() || false,human_fields,text_truncated,
-    scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};
+    scroll:{y:scrollY,height},actions,blocks,marker,page_key,guards,omitted_actions};
 })()

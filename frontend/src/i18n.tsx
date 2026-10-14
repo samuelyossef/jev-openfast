@@ -4,6 +4,10 @@ export const locales = ['pt-BR', 'en', 'es', 'fr'] as const;
 export type Locale = typeof locales[number];
 
 const pt = {
+  taskRequirements: 'Requisitos da tarefa', modelUsage: 'Consumo dos modelos', modelBudget: 'Limite por tarefa',
+  estimatedCost: 'Inclui reservas estimadas para chamadas sem custo confirmado.', modelAttempts: 'tentativas',
+  specialist: 'Revisão pelo especialista', stateIncomplete: 'Tarefa incompleta',
+  budgetPause: 'Limite de modelos atingido. A tarefa está pausada.',
   cancel: 'Cancelar', save: 'Salvar', saving: 'Salvando…', closeNotice: 'Fechar aviso',
   conversationArchived: 'Conversa arquivada. Você pode restaurá-la em Arquivadas.',
   conversationDeleted: 'Conversa excluída.', conversationRestored: 'Conversa restaurada nos Recentes.',
@@ -43,6 +47,10 @@ type Messages = { [K in keyof typeof pt]: K extends 'stages' ? Record<string, st
 const dictionaries: Record<Locale, Messages> = {
   'pt-BR': pt,
   en: { ...pt,
+    taskRequirements: 'Task requirements', modelUsage: 'Model usage', modelBudget: 'Task limit',
+    estimatedCost: 'Includes estimated reservations for calls without confirmed costs.', modelAttempts: 'attempts',
+    specialist: 'Specialist review', stateIncomplete: 'Incomplete task',
+    budgetPause: 'Model budget reached. The task is paused.',
     cancel: 'Cancel', save: 'Save', saving: 'Saving…', closeNotice: 'Dismiss notice',
     conversationArchived: 'Conversation archived. You can restore it in Archived.',
     conversationDeleted: 'Conversation deleted.', conversationRestored: 'Conversation restored to Recent.',
@@ -53,6 +61,10 @@ const dictionaries: Record<Locale, Messages> = {
     manualControl:'Manual control',takeControl:'Take control',preparingManual:'Preparing manual control…',youControl:'You are in control',controlElsewhere:'Controlled in another interface',recoverControl:'Refresh and recover control',continueJev:'Continue with Jev',exitManual:'Exit manual control',handoffTitle:'Jev needs you to take control',handoffLOGIN:'This page asks for a sign-in or password. Take control, sign in, then choose Continue with Jev.',handoffCAPTCHA:'A human verification (CAPTCHA) appeared. Take control, solve it, then choose Continue with Jev.',handoffVERIFICATION_CODE:'The page asks for a verification code. Take control, enter it, then choose Continue with Jev.',handoffPERSONAL_DATA:'I need information only you can provide. Take control, fill it in, then choose Continue with Jev.',handoffSTUCK:'I cannot make progress on this page. Take control, clear the blocker, then choose Continue with Jev.',handoffOTHER:'I need your help on this page. Take control, clear the blocker, then choose Continue with Jev.',manualHint:'Click the page to type. Text is protected; the assistant is paused.',
     stages:{startup:'Browser startup',navigation:'Navigation',observation:'Observation',guard:'Guards',preview_guard:'Preview guards',capture:'Captures',execution:'Browser execution',decision:'Decision cycle',decision_model:'Jev model',text_model:'Text generation',helper_request:'Destination and intent',helper_answer:'Page answer',helper_safety:'Safety assessment',helper_verify:'Verification and reply',publication:'State update'} },
   es: { ...pt,
+    taskRequirements: 'Requisitos de la tarea', modelUsage: 'Consumo de modelos', modelBudget: 'Límite por tarea',
+    estimatedCost: 'Incluye reservas estimadas para llamadas sin coste confirmado.', modelAttempts: 'intentos',
+    specialist: 'Revisión del especialista', stateIncomplete: 'Tarea incompleta',
+    budgetPause: 'Límite de modelos alcanzado. La tarea está pausada.',
     cancel: 'Cancelar', save: 'Guardar', saving: 'Guardando…', closeNotice: 'Cerrar aviso',
     conversationArchived: 'Conversación archivada. Puedes restaurarla en Archivadas.',
     conversationDeleted: 'Conversación eliminada.', conversationRestored: 'Conversación restaurada en Recientes.',
@@ -63,6 +75,10 @@ const dictionaries: Record<Locale, Messages> = {
     manualControl:'Control manual',takeControl:'Tomar el control',preparingManual:'Preparando el control manual…',youControl:'Tienes el control',controlElsewhere:'Control en otra interfaz',recoverControl:'Actualizar y recuperar el control',continueJev:'Continuar con Jev',exitManual:'Salir del control manual',handoffTitle:'Jev necesita que tomes el control',handoffLOGIN:'Esta página pide iniciar sesión o una contraseña. Toma el control, inicia sesión y elige Continuar con Jev.',handoffCAPTCHA:'Apareció una verificación humana (CAPTCHA). Toma el control, resuélvela y elige Continuar con Jev.',handoffVERIFICATION_CODE:'La página pide un código de verificación. Toma el control, introdúcelo y elige Continuar con Jev.',handoffPERSONAL_DATA:'Necesito un dato que solo tú puedes dar. Toma el control, complétalo y elige Continuar con Jev.',handoffSTUCK:'No consigo avanzar en esta página. Toma el control, resuelve el bloqueo y elige Continuar con Jev.',handoffOTHER:'Necesito tu ayuda en esta página. Toma el control, resuelve el bloqueo y elige Continuar con Jev.',manualHint:'Haz clic en la página para escribir. El texto está protegido; el asistente está pausado.',
     stages:{startup:'Apertura del navegador',navigation:'Navegación',observation:'Observación',guard:'Guardas',preview_guard:'Guardas de vista previa',capture:'Capturas',execution:'Ejecución en navegador',decision:'Ciclo de decisión',decision_model:'Modelo Jev',text_model:'Generación de texto',helper_request:'Destino e intención',helper_answer:'Respuesta de la página',helper_safety:'Evaluación de seguridad',helper_verify:'Verificación y respuesta',publication:'Actualización de estado'} },
   fr: { ...pt,
+    taskRequirements: 'Exigences de la tâche', modelUsage: 'Consommation des modèles', modelBudget: 'Limite par tâche',
+    estimatedCost: 'Comprend les réserves estimées des appels sans coût confirmé.', modelAttempts: 'tentatives',
+    specialist: 'Révision du spécialiste', stateIncomplete: 'Tâche incomplète',
+    budgetPause: 'Limite des modèles atteinte. La tâche est en pause.',
     cancel: 'Annuler', save: 'Enregistrer', saving: 'Enregistrement…', closeNotice: 'Fermer le message',
     conversationArchived: 'Conversation archivée. Vous pouvez la restaurer dans Archivées.',
     conversationDeleted: 'Conversation supprimée.', conversationRestored: 'Conversation restaurée dans Récentes.',

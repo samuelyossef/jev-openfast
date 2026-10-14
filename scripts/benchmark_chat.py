@@ -205,6 +205,9 @@ def child(source, case, real_browser):
             if kind == "request":
                 output["intent"] = "answer" if case == "question" else "task"
                 output["task"] = context["goal"]
+                if "requirements" in assistant.PROPERTIES["request"]:
+                    output.update(needs_planning=False, requirements=[{"description": context["goal"],
+                                  "source_quote": context["goal"], "source_turn_id": ""}])
         elif kind in {"intent", "answer"}:
             output = {"reply": context["page"]["text"]}
             if kind == "intent":
@@ -221,6 +224,8 @@ def child(source, case, real_browser):
                       "reason": "Verificação independente da fixture."}]}
             if "reply" in assistant.PROPERTIES["verify"]:
                 output["reply"] = "Resultado confirmado na fixture."
+            if context.get("task_context", {}).get("requirements"):
+                output["checks"][0]["requirement_id"] = "r1"
         else:
             output = {"reply": "Resultado confirmado na fixture."}
         return {"choices": [{"message": {"content": json.dumps(output)}}], "usage": {}}

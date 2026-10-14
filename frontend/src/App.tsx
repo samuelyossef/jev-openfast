@@ -50,6 +50,11 @@ type Snapshot = {
   preview_revision?: number;
   action_count?: number;
   decision_count?: number;
+  outcome?: string;
+  task_context?: { stale: boolean; requirements: { id: string; description: string; status: string }[];
+    escalations: { stage: string; reason: string; model: string; status: string }[] };
+  model_usage?: { limit_usd: number; consumed_usd: number; estimated: boolean; attempts: number;
+    calls?: { kind: string; model: string; status: string; cost_usd: number; latency_ms?: number }[] };
   timing?: { end_to_end_ms: number; execution_ms: number; approval_wait_ms: number; manual_wait_ms?:number; first_action_ms: number | null;
     stages?: Record<string, { count: number; duration_ms: number }> };
 };
@@ -196,7 +201,7 @@ function MessageCard({ message, progress, onRecheck, rechecking, actions }: { me
       <p>{t(handoffKeys[message.handoff?.code as keyof typeof handoffKeys] ?? 'handoffOTHER')}</p>
       {actions}
     </div> : message.kind === 'input' ? <div className="approval-card" role="status"><strong>{t('inputTitle')}</strong><p>{message.content}</p><p>{t('inputHint')}</p>{actions}</div>
-      : message.kind === 'technical_pause' ? <div className="msg-text" role="status"><strong>{t(message.pause_code === 'failure' ? 'technicalFailure' : 'technicalPause')}</strong><p>{message.content}</p></div>
+      : message.kind === 'technical_pause' ? <div className="msg-text" role="status"><strong>{t(message.pause_code === 'model_budget' ? 'budgetPause' : message.pause_code === 'failure' ? 'technicalFailure' : 'technicalPause')}</strong><p>{message.content}</p></div>
         : <div className="msg-text">{message.content || <span className="msg-pending">{t('stateThinking')}… {progress && <span className="msg-progress" role="status">{progress}</span>}</span>}</div>}
     {message.verification && <div className={`verification ${message.verification.satisfied && !message.verification.stale ? 'verified' : 'unverified'}`}>
       {message.verification.stale ? t('staleVerification') : message.verification.satisfied ? t('confirmed') : t('unconfirmed')}
@@ -318,15 +323,22 @@ function ExecutionSidebar({ state }: { state: Snapshot }) {
   const targetLabel = selectedElement?.label || decision?.target || decision?.choice || '—';
   const targetOption = decision?.target?.includes(':') ? decision.target.split(':').slice(1).join(':') : '';
   const statusLabels: Record<string, string> = { thinking: t('stateThinking'), running: t('stateThinking'), verifying: t('stateVerifying'), paused: t('statePaused'), awaiting_confirmation: t('stateConfirmation'), awaiting_input: t('stateInput'), answered: t('stateAnswered'), completed: t('stateCompleted'), error: t('stateError'), idle: t('stateIdle') };
-  const statusClass = activePhases.has(state.chat_status) ? 'is-active' : state.chat_status === 'paused' ? 'is-paused' : state.chat_status === 'awaiting_confirmation' ? 'is-waiting' : state.chat_status === 'error' ? 'is-error' : ['answered', 'completed'].includes(state.chat_status) ? 'is-complete' : '';
+  const statusClass = activePhases.has(state.chat_status) ? 'is-active' : state.chat_status === 'paused' || state.outcome === 'incomplete' ? 'is-paused' : state.chat_status === 'awaiting_confirmation' ? 'is-waiting' : state.chat_status === 'error' ? 'is-error' : ['answered', 'completed'].includes(state.chat_status) ? 'is-complete' : '';
   return <aside className="execution-sidebar" id="execution-details" aria-label={t('executionDetails')}>
       <div className="execution-sidebar-head sb-top"><div className="execution-heading"><strong>{t('executionDetails')}</strong></div></div>
       <div className="inspector-content">
         <section className={`execution-summary ${statusClass}`} aria-label={t('currentExecution')}>
-          <span className="execution-state"><i />{statusLabels[state.chat_status] || state.chat_status}</span>
+          <span className="execution-state"><i />{state.outcome === 'incomplete' ? t('stateIncomplete') : statusLabels[state.chat_status] || state.chat_status}</span>
           <div className="execution-current"><span>{decision?.operation ? t('operation') : t('activity')}</span><strong>{decision?.operation || (!state.session_id ? t('describeAction') : state.progress) || t('waitingTask')}</strong></div>
           {state.goal && <div className="execution-goal"><span>{t('currentRequest')}</span><p className="inspector-goal">{state.goal}</p></div>}
         </section>
+        {!!state.task_context?.requirements.length && <details className="execution-group" open>
+          <summary>{t('taskRequirements')} ({state.task_context.requirements.length})</summary>
+          {state.task_context.requirements.map((item) => <div className="execution-item" key={item.id}>
+            <span className="execution-index">{item.id}</span><span className="execution-item-body"><strong>{item.description}</strong>
+              <small>{item.status === 'confirmed' && !state.task_context?.stale ? t('statusConfirmed') : item.status === 'not_met' ? t('statusNotMet') : t('statusUnknown')}</small></span>
+          </div>)}
+        </details>}
         {!page && state.last_url && <p className="execution-note">{t('previousDetailsUnavailable')}</p>}
         {decision && <div className="execution-facts"><div className="execution-target"><span>{t('selectedTarget')}</span><strong>{targetLabel}</strong>{selectedElement && <small>#{selectedElement.index} · {selectedElement.role}{selectedElement.operations.length ? ` · ${selectedElement.operations.join(' / ')}` : ''}</small>}{targetOption && <small>{targetOption}</small>}</div><div className="execution-confidence"><span>{t('confidence')}</span><strong>{decision.target_confidence == null ? '—' : `${Math.round(decision.target_confidence * 100)}%`}</strong></div></div>}
         {state.timing && <section className="execution-timing" aria-label={t('requestTime')}>
@@ -339,6 +351,18 @@ function ExecutionSidebar({ state }: { state: Snapshot }) {
           </div>
           {!!Object.keys(state.timing.stages || {}).length && <details className="execution-stages" open><summary>{t('stageTimes')}</summary>{Object.entries(state.timing.stages || {}).map(([name, stage]) => <p key={name}><span>{labels.stages[name] || name}</span><strong>{(stage.duration_ms / 1000).toFixed(2)} s <small>({stage.count})</small></strong></p>)}<small>{t('overlap')}</small></details>}
         </section>}
+        {state.model_usage && <details className="execution-group execution-model-usage">
+          <summary>{t('modelUsage')}</summary>
+          <div className="execution-usage-body">
+          <div className="execution-timing-head"><span>{t('modelUsage')}</span><strong>US$ {state.model_usage.consumed_usd.toFixed(4)}</strong></div>
+          <p>{t('modelBudget')}: US$ {state.model_usage.limit_usd.toFixed(2)} · {state.model_usage.attempts} {t('modelAttempts')}</p>
+          {state.model_usage.estimated && <small>{t('estimatedCost')}</small>}
+          {(state.model_usage.calls || []).slice(-8).map((call, index) => <p key={index}>{call.kind === 'plan' ? t('specialist') : labels.stages[call.kind === 'decision' ? 'decision_model' : call.kind === 'field_text' ? 'text_model' : `helper_${call.kind}`] || call.kind} · {call.model} · {call.latency_ms == null ? '…' : `${(call.latency_ms / 1000).toFixed(2)} s`}</p>)}
+          {!!state.task_context?.escalations.length && <details open><summary>{t('specialist')}</summary>
+            {state.task_context.escalations.map((item) => <p key={item.stage}>{item.reason} · {item.model} · {item.status}</p>)}
+          </details>}
+        </div>
+        </details>}
         <div className="sb-section">{t('observedData')}</div>
         {!!state.user_actions?.length && <details className="execution-group"><summary>{t('manualControl')} ({state.user_actions.length})</summary>{state.user_actions.map((item,index)=><p key={index}>{item.type} · {item.execution}</p>)}</details>}
         <details className="execution-group" open><summary><span className="execution-group-title">{t('observedElements')}</span><span className="execution-count">{state.elements?.length || 0}</span></summary><div className="element-list">{(state.elements || []).map((element) => <div className={`execution-item ${selectedElement?.index === element.index ? 'is-selected' : ''}`} key={element.index}><span className="execution-index">{element.index}</span><span className="execution-item-body"><strong>{element.label}</strong><small>{element.role}{element.operations.length ? ` · ${element.operations.join(' / ')}` : ''}</small>{element.value && <small>{t('value')}: {element.value}</small>}</span></div>)}</div></details>
@@ -434,7 +458,7 @@ function App() {
   }, [accountMenuOpen]);
   useEffect(() => { if (thread.current) thread.current.scrollTop = thread.current.scrollHeight; }, [state?.messages?.length, state?.approval, state?.manual?.status]);
   useEffect(() => {
-    if (!['thinking', 'running'].includes(state?.chat_status || '')) setPauseSubmitting(false);
+    if (!activePhases.has(state?.chat_status || '')) setPauseSubmitting(false);
   }, [state?.chat_status]);
 
   const refreshHistory = useCallback(async () => {
@@ -762,7 +786,7 @@ function App() {
             {state?.approval && <div className="approval-card"><strong>{t('confirmAction')}</strong><p>{state.approval.description}</p><small>{state.approval.url}</small><div className="approval-actions"><button disabled={busy} onClick={() => perform('reject', { approval_id: state.approval!.id })}>{t('reject')}</button><button className="primary-button" disabled={busy} onClick={() => perform('approve', { approval_id: state.approval!.id })}>{t('confirmAction')}</button></div></div>}
           </div></div>
           <Composer value={draft} onChange={setDraft} onSend={send} disabled={disabled} overlays={overlays} onOverlaysChange={setOverlays}
-            pauseVisible={['thinking', 'running'].includes(state?.chat_status || '')} paused={state?.chat_status === 'paused'}
+            pauseVisible={activePhases.has(state?.chat_status || '')} paused={state?.chat_status === 'paused'}
             pausing={pausing} controlDisabled={busy} onPause={() => { void pause(); }} onResume={() => { void perform('resume'); }} />
         </>}
       </main>

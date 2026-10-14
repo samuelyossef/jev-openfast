@@ -87,8 +87,8 @@ def test_enter_uses_its_own_observed_target_and_verification_feedback(monkeypatc
 
     def post(_url, _key, body):
         assert body["state"]["verification_feedback"] == [{"requirement": "Show results", "reason": "Missing"}]
-        for head in ("operation", "press_enter_target"):
-            assert '"requirement": "Show results"' in body["questions"][head]["instructions"]
+        assert '"requirement": "Show results"' in body["questions"]["operation"]["instructions"]
+        assert "verification_feedback" in body["questions"]["press_enter_target"]["instructions"]
         return {"model": "test", "answers": {
             "operation": choice(body["questions"]["operation"]["criteria"], "PRESS_ENTER"),
             "press_enter_target": choice(body["questions"]["press_enter_target"]["criteria"], "1"),
@@ -234,7 +234,8 @@ def test_target_head_receives_control_state_and_full_next_step_rules(monkeypatch
         selected = json.loads(target["criteria"]["1"])
         assert selected["checked"] == "true"
         assert selected["selected"] is False
-        assert NEXT_ACTION in target["instructions"]
+        assert body["state"]["policy"] == NEXT_ACTION
+        assert "state.policy" in target["instructions"]
         assert TARGET in target["instructions"]
         return {
             "model": "test",
@@ -248,6 +249,40 @@ def test_target_head_receives_control_state_and_full_next_step_rules(monkeypatch
     monkeypatch.setattr(model, "post_json", post)
     d = model.choose(p, "Search with free cancellation", [])
     assert d["choice"] == "e3"
+
+
+def test_shared_policy_preserves_results_near_end_of_large_observation(monkeypatch):
+    observed = page()
+    observed["text"] = "Observed result text. " * 230
+    for index in range(24):
+        observed["actions"].append({"id": f"result-{index}", "kind": "click", "node": 100 + index,
+                                    "role": "link", "label": f"Result {index} " + "description " * 17})
+
+    def post(_url, _key, body):
+        assert body["state"]["page"]["observation_limits"]["omitted_actions"] == 0
+        assert body["state"]["elements"][-1]["label"] == observed["actions"][-1]["label"]
+        assert body["state"]["policy"] == NEXT_ACTION
+        assert NEXT_ACTION not in body["questions"]["operation"]["instructions"]
+        ids = body["questions"]["operation"]["criteria"]
+        return {"answers": {"operation": choice(ids, "DONE")}}
+
+    monkeypatch.setattr(model, "openrouter_key", lambda: "offline")
+    monkeypatch.setattr(model, "post_json", post)
+    model.choose(observed, "Find the relevant result", [])
+
+
+def test_specialist_focus_reaches_operation_and_target_without_replacing_original_goal(monkeypatch):
+    def post(_url, _key, body):
+        assert body["state"]["goal"] == "Find a result and compare its price"
+        for name in ("operation", "click_target", "type_text_target"):
+            assert "Compare the observed prices" in body["questions"][name]["instructions"]
+        assert body["state"]["policy"] == NEXT_ACTION
+        ids = body["questions"]["operation"]["criteria"]
+        return {"answers": {"operation": choice(ids, "DONE")}}
+    monkeypatch.setattr(model, "openrouter_key", lambda: "offline")
+    monkeypatch.setattr(model, "post_json", post)
+    model.choose(page(), "Find a result and compare its price", [],
+                 task_context={"guidance": {"next_subgoal": "Compare the observed prices"}})
 
 
 def test_quoted_task_text_uses_text_model(monkeypatch):
@@ -465,6 +500,25 @@ def test_ineffective_click_is_not_offered_again_on_identical_page(monkeypatch, c
     assert model.choose(p, "Find a book", history)["choice"] == "enter"
 
 
+def test_reversible_click_pair_does_not_offer_reopening_control(monkeypatch):
+    p = page()
+    p["actions"].insert(2, {"id": "scroll_down", "kind": "scroll", "label": "Scroll down", "delta": 560})
+    history = [
+        {"execution": "executed", "kind": "click", "node": 20, "fingerprint": p["fingerprint"]},
+        {"execution": "executed", "kind": "click", "node": 21, "fingerprint": "dialog-page"},
+    ]
+
+    def post(_url, _key, body):
+        assert "Go" not in [e["label"] for e in body["state"]["elements"]]
+        assert "SCROLL_DOWN" in body["questions"]["operation"]["criteria"]
+        return {"model": "test", "answers": {
+            "operation": choice(body["questions"]["operation"]["criteria"], "SCROLL_DOWN")}}
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", post)
+    assert model.choose(p, "Find a book", history)["choice"] == "scroll_down"
+
+
 def test_executed_click_records_observed_identity_before_input(runner):
     p = runner.state["page"]
     runner.state["decision"] = decision("e3")
@@ -664,6 +718,24 @@ def test_loading_waits_do_not_trigger_no_progress_stop(runner):
     assert len(runner.state["history"]) == 5 and runner.state["status"] == "ready"
 
 
+@pytest.mark.parametrize("new_content", [False, True])
+def test_repeated_click_checks_visible_content_despite_fingerprint_churn(runner, new_content):
+    observations = []
+    for index in range(4):
+        observed = deepcopy(runner.state["page"])
+        observed["fingerprint"] = f"animation-{index}"
+        observed["text"] = f"Results page {index}" if new_content else "Same results"
+        observations.append(observed)
+    runner.state["browser"].observe.side_effect = observations
+    for _ in range(4):
+        runner.state["decision"] = decision("e3")
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert runner.state["status"] == ("ready" if new_content else "blocked")
+    assert runner.state["browser"].act.call_count == 4
+    if not new_content:
+        assert runner.state["stop_reason"] == "repeated click without new visible content"
+
+
 def test_repeated_two_action_cycle_stops_early(runner):
     first = page()
     second = deepcopy(first)
@@ -682,6 +754,18 @@ def test_repeated_two_action_cycle_stops_early(runner):
     assert runner.state["status"] == "blocked"
     assert runner.state["stop_reason"] == "repeated two-action loop"
     assert len(runner.state["history"]) == 4
+
+
+def test_three_page_navigation_cycle_survives_scrolls_but_resets_after_new_input():
+    cycle = [{"execution": "executed", "kind": "click", "action": f"Open {target}",
+              "source_url": source, "url": target}
+             for source, target in [("a", "b"), ("b", "c"), ("c", "a")]]
+    history = [item for click in cycle * 2 for item in
+               (click, {"execution": "executed", "kind": "scroll"})]
+    assert not loop.repeated_navigation_cycle(history[:6])
+    assert loop.repeated_navigation_cycle(history)
+    history.insert(6, {"execution": "executed", "kind": "fill"})
+    assert not loop.repeated_navigation_cycle(history)
 
 
 def test_stale_observation_preserves_executed_action(runner):
@@ -1046,12 +1130,12 @@ class _Response:
 
 
 def test_rate_limit_is_retried_with_retry_after_then_succeeds(monkeypatch):
-    replies = [_Response(429, {"retry-after": "3"}), _Response(503), _Response(200, data={"ok": True})]
+    replies = [_Response(429, {"retry-after": "3"}), _Response(200, data={"ok": True})]
     monkeypatch.setattr(model.CLIENT, "post", Mock(side_effect=replies))
     sleeps = []
     monkeypatch.setattr(model.time, "sleep", sleeps.append)
     assert model.post_json("https://x", "k", {}) == {"ok": True}
-    assert sleeps == [3.0, 2.0]
+    assert sleeps == [3.0]
 
 
 def test_persistent_rate_limit_explains_itself_without_hanging(monkeypatch):

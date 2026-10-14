@@ -193,13 +193,15 @@ def command(name, body, owner_token=None):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def send(self, status, content, mime="application/json"):
+    def send(self, status, content, mime="application/json", extra_headers=None):
         content = content if isinstance(content, bytes) else content.encode()
         self.send_response(status)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(content)
 
@@ -207,6 +209,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Host") != f"127.0.0.1:{PORT}":
             return self.send(403, "Forbidden", "text/plain")
         path = urlparse(self.path).path
+        if path == "/api/documents" or path.startswith("/api/documents/"):
+            return self.send(404, json.dumps({"error": "Documentos temporariamente indisponível."}))
         if path == "/favicon.ico":
             return self.send(204, b"", "image/x-icon")
         if path == "/api/state":
@@ -272,6 +276,9 @@ class Handler(BaseHTTPRequestHandler):
             or self.headers.get("Origin") not in (None, ORIGIN)
         ):
             return self.reject_post(403, json.dumps({"error": "Local demo requests only"}))
+        path = urlparse(self.path).path
+        if path == "/api/documents" or path.startswith("/api/documents/"):
+            return self.reject_post(404, json.dumps({"error": "Documentos temporariamente indisponível."}))
         if not LOCK.acquire(blocking=False):
             return self.reject_post(409, json.dumps({"error": "Outra solicitação está sendo processada."}))
         try:
@@ -280,7 +287,6 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Invalid request size")
             self.connection.settimeout(5)
             body = json.loads(self.rfile.read(length))
-            path = urlparse(self.path).path
             if not path.startswith("/api/"):
                 raise ValueError("Comando desconhecido.")
             result = command(path.removeprefix("/api/"), body, owner_token=self.headers.get("X-Manual-Control", ""))

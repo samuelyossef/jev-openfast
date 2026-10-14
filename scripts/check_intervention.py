@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from jev_ultrafast import agent, assistant, demo, model
-from jev_ultrafast.browser import Browser
+from jev_ultrafast.browser import Browser, StalePage
 from jev_ultrafast.chat import ChatSession
 from jev_ultrafast.conversations import ConversationStore
 
@@ -63,12 +63,16 @@ def check_ui(root, scenario, passed):
         browser = Browser(demo.ORIGIN)
 
         def wait(expression):
-            deadline = time.monotonic() + 10
+            deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
-                if browser.evaluate(expression):
-                    return
+                try:
+                    if browser.evaluate(expression):
+                        return
+                except StalePage:
+                    pass  # Read-only polling can outlive a locale navigation; never repeat UI input.
                 time.sleep(0.05)
-            raise AssertionError(f"UI condition not met: {expression}")
+            raise AssertionError(f"UI condition not met: {expression}; phase={session.phase}; "
+                                 f"progress={session.progress}; body={browser.evaluate('document.body.innerText')[-2000:]}")
 
         try:
             for locale, title, cancel in [
@@ -91,6 +95,12 @@ def check_ui(root, scenario, passed):
             wait("document.body.innerText.includes('Resultados para Belo Horizonte')")
             assert session.phase == "completed" and session.goal == "Pesquisar hotéis na cidade que eu informar"
             passed.append("PASS rebuilt UI: chat reply resumes the original task and displays verified result")
+            completed = (len(session.calls), len(session.agent.state["history"]))
+            browser.evaluate("location.reload()")
+            wait("document.body.innerText.includes('Resultados para Belo Horizonte')")
+            assert session.phase == "completed"
+            assert (len(session.calls), len(session.agent.state["history"])) == completed
+            passed.append("PASS rebuilt UI: reloading a completed task does not restart models or browser actions")
             session.close()
             scenario.update(mode="city", calls=0)
             session = ChatSession(root, on_change=demo.STORE.save)
@@ -123,7 +133,13 @@ def main():
     def ask(kind, context, calls):
         calls.append({"kind": kind, "model": "offline", "status": "mocked", "attempts": 0})
         if kind == "request":
-            return {"intent": "task", "url": "-", "reply": "Verificando a página local.", "task": context["goal"]}
+            return {"intent": "task", "url": "-", "reply": "Verificando a página local.", "task": context["goal"],
+                    "needs_planning": False, "requirements": [{"description": context["goal"],
+                        "source_quote": context["goal"], "source_turn_id": ""}]}
+        if kind == "plan":
+            return {"objective": context["goal"], "evidence_needed": "Resultado disponível",
+                    "next_subgoal": "Procurar o resultado", "requirements": [{"description": context["goal"],
+                        "source_quote": context["goal"], "source_turn_id": ""}]}
         if kind == "safety":
             return {"effect": "safe", "description": "Pesquisa local"}
         if kind == "blocker":
@@ -136,7 +152,8 @@ def main():
         if kind == "verify":
             quote = "Catálogo disponível" if scenario["mode"] == "optional" else "Resultados para Belo Horizonte"
             return {"satisfied": True, "reply": quote, "checks": [{"requirement": context["goal"],
-                    "status": "confirmed", "evidence": [quote], "reason": "Resultado atual observado"}]}
+                    "requirement_id": "r1", "status": "confirmed", "evidence": [quote],
+                    "reason": "Resultado atual observado"}]}
         raise AssertionError(f"Unexpected helper {kind}")
 
     def choose(page, goal, history, **_kwargs):

@@ -37,6 +37,8 @@ is `TYPE_TEXT`.
 - **Page questions.** Asking about the open page reads a fresh observation. It never clicks or types.
 - **Approval for external commitments.** Sending, submitting, publishing, buying, paying, booking, deleting or
   changing account settings pauses and asks you first. Approval is renewed if the page changes.
+- **Terminal results.** The final check never restarts browser actions. Unconfirmed results show pending requirements;
+  a new request or an explicit continuation of a paused task is required to navigate again.
 - **Independent verification.** After `DONE`, the page is checked again and the result is shown as confirmed,
   not met or unknown, with quoted evidence. A `DONE` choice is never treated as proof.
 - **Take over when it matters.** When JEV needs a login, CAPTCHA, verification code or personal data, a card
@@ -58,7 +60,15 @@ is `TYPE_TEXT`.
   delete. Stored locally in SQLite. After a restart, conversations come back as interrupted and nothing is
   replayed.
 - **Settings** (`/settings`): interface language, dark theme and the OpenRouter API key. The footer shows the
-  app version with GitHub and LinkedIn links.
+  app version and source links.
+- **Task context.** Original requirements are shared by decision, field, safety and verification helpers;
+  each requirement must be checked explicitly. Numeric prices, quantities and literal dates use associated
+  observed evidence. Observation references are stored locally and become stale after a restart.
+- **Bounded specialist.** Complex tasks may use one initial specialist review.
+  The specialist supplies objectives and evidence to seek; only Jev selects executable observed targets.
+  Model attempts, usage and estimated/confirmed costs appear in execution details.
+  If Mercury returns its specific provider-unavailable error, the remaining read-only attempt uses Qwen3
+  30B A3B Instruct with the same JSON contract, deadline and task budget. Both attempts remain recorded.
 
 ## Quick start
 
@@ -97,6 +107,10 @@ enable remote debugging in your own Chrome at `chrome://inspect/#remote-debuggin
 Open **http://127.0.0.1:8766** (exactly this address; `localhost` is rejected). Run `uv run jev --doctor` at any
 time to check Python, the key, the port and Chrome, and `uv run jev --version` for the version.
 
+### Viewer documents
+
+Documentos is temporarily unavailable. The Viewer shows only the Internet preview, and document upload, creation, revision, download and deletion endpoints are disabled. The document implementation and any files already stored locally are preserved for future work.
+
 ## Using it
 
 1. Type a task, for example: *"Open https://en.wikipedia.org/wiki/Web_browser and tell me when the first web
@@ -120,12 +134,18 @@ Set variables in `.env` (see [.env.example](.env.example)).
 | `TYPESAFE_MODEL` | `typesafe/jev-1.13` | [TypeSafe's Jev](https://openrouter.ai/typesafe/jev-1.13) decision model: chooses the operation and target. |
 | `TEXT_MODEL` | `inception/mercury-2.5` | Small model for `TYPE_TEXT` and the chat helpers. |
 | `TEXT_MODEL_REASONING` | `none` | Reasoning setting for the text model. |
+| `DEEP_MODEL` | `deepseek/deepseek-v4.1-flash` | Initial requirement review. |
+| `MODEL_TASK_BUDGET_USD` | `0.10` | Preventive spending limit per task, including retries and specialist calls. |
 | `TYPESAFE_DEMO_PORT` | `8766` | Local server port. |
 | `BU_CDP_URL` | unset | Chrome DevTools endpoint to attach to, for example `http://127.0.0.1:9222`. |
 | `BU_NAME` | `default` | Name of the browser connection. Use a distinct one for a dedicated Chrome. |
 | `JEV_HEADLESS_BROWSER` | unset | `1` opens tabs in the background without activating them (the Windows script sets it). |
 
 A key saved in the interface is encrypted with Windows DPAPI under `artifacts/` and is never displayed again.
+Calls reserve a conservative estimate using provider price ceilings and reconcile returned usage costs.
+Unconfirmed costs retain their reservation. This is a preventive local budget, not a billing guarantee;
+keep the OpenRouter key's spending limit as well. Provider retries are limited to two attempts and backoff
+is interruptible by Pause. Mercury remains the default until a separate live benchmark qualifies an open model.
 On other systems use `.env`. Keys stay on the server; the browser UI never receives them. `.env` and
 `artifacts/` are git-ignored.
 
@@ -210,6 +230,12 @@ More detail in [docs/design.md](docs/design.md).
 | `scripts/render_demo.py`, `render_fixture.py` | Render the demo video and fixture frames. | no |
 
 ## Development
+
+For a separate paid, reproducible model comparison, run
+`uv run python scripts/benchmark_models.py --live --repeats 3 --total-budget-usd 1 --task-budget-usd 0.10`.
+This uses local fixtures with real Chrome, checks outcomes independently, records traces under
+`artifacts/model-benchmark/`, and reports candidate eligibility without changing `.env`.
+Passing the local corpus is a qualification sample, not proof of reliability on arbitrary websites.
 
 ```bash
 cd frontend && npm ci && npm run build && npm run lint && cd ..

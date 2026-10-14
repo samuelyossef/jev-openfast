@@ -1,16 +1,37 @@
 """The complete agent loop. Typed choices, observable state, bounded execution."""
 
 import base64
+import hashlib
 import time
 from pathlib import Path
 
 from .browser import Browser, StalePage
 from .model import MissingValue, action_space, choose, field_context, field_text
 from .questions import MAX_STEPS
+from .task_context import model_context
 from .timing import Timings, timed
 
 # ponytail: fixed window; a resumed run (pause, manual control) is older than this and re-checks freshness.
 RECENT_OBSERVATION_S = 0.5
+
+
+def repeated_navigation_cycle(history):
+    """Scrolling does not erase a repeated closed path; new input or human control does."""
+    clicks = []
+    for item in history:
+        if item.get("execution") != "executed":
+            continue
+        if item.get("kind") in {"fill", "select", "press_enter", "press_escape", "manual"}:
+            clicks.clear()
+        elif item.get("kind") == "click" and item.get("source_url") and item.get("url"):
+            clicks.append((item["action"], item["source_url"], item["url"]))
+    for length in range(2, 7):
+        recent = clicks[-2 * length:]
+        if (len(recent) == 2 * length and recent[:length] == recent[length:]
+                and recent[0][1] == recent[length - 1][2]
+                and len({item[1] for item in recent}) > 1):
+            return True
+    return False
 
 
 def open_blank(viewport=None):
@@ -26,6 +47,7 @@ class Agent:
             raise ValueError("Supply a task")
         plan = [task] if task else []
         self.pending_text = None
+        self.on_action = None
         if browser is not None:
             # Opened in advance (on about:blank) while the request helper was still running.
             self.browser = browser
@@ -78,7 +100,7 @@ class Agent:
             goal=goal.strip(), page=page, decision=None, history=[], status="ready",
             plan=[goal.strip()], plan_index=0, decisions=[], text_calls=[], elapsed_ms=0,
             started_at=None, stop_reason=None, conversation=conversation or [],
-            verification_feedback=None,
+            verification_feedback=None, task_context=None,
         )
 
     def snapshot(self):
@@ -91,7 +113,9 @@ class Agent:
         """Prepare once; reuse only while every part of the helper context stays identical."""
         if not self.state["browser"].fresh(page, action):
             raise StalePage("Page changed before text generation. Choose again.")
-        context = field_context(self.state["goal"], action, page, self.state["history"])
+        context = field_context(self.state["goal"], action, page, self.state["history"],
+                                task_context=model_context(self.state["task_context"])
+                                if self.state.get("task_context") else None)
         if self.state.get("conversation"):
             context["conversation"] = self.state["conversation"]
         if self.state.get("verification_feedback"):
@@ -146,6 +170,8 @@ class Agent:
         context = {"conversation": state["conversation"]} if state.get("conversation") else {}
         if state.get("verification_feedback"):
             context["verification_feedback"] = state["verification_feedback"]
+        if state.get("task_context"):
+            context["task_context"] = model_context(state["task_context"])
         with self.timings.measure("decision_model"):
             state["decision"] = choose(state["page"], state["goal"], state["history"], **context)
         state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
@@ -177,6 +203,16 @@ class Agent:
             state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
             return
         action = next(a for a in page["actions"] if a["id"] == selected)
+        recovering = self.state.get("task_context") and any(
+            item["stage"] == "recovery" for item in self.state["task_context"]["escalations"])
+        if recovering and action.get("node") is not None and any(
+            item.get("execution") == "executed" and item.get("page_changed") is False
+            and item.get("fingerprint") == page["fingerprint"] and item.get("node") == action["node"]
+            and item.get("kind") == action["kind"] for item in state["history"]
+        ):
+            state["status"] = "blocked"
+            state["stop_reason"] = "Recovery cannot repeat an ineffective action on the same observation"
+            return
         previous_navigation = [h for h in state["history"] if h.get("execution") == "executed"
                                and h.get("href") == action.get("href") and h.get("source_url") == page["url"]]
         if action.get("href") and action.get("navigation") is not False and "#" not in action["href"] \
@@ -231,6 +267,8 @@ class Agent:
             "elapsed_ms": round((time.perf_counter() - state["started_at"]) * 1000),
         }
         state["history"].append(entry)
+        if getattr(self, "on_action", None):
+            self.on_action()
         if action["kind"] == "fill" and text == action.get("value"):
             # The requested value is already present; reconsider once without browser input.
             entry.update(execution="not_executed", page_changed=False,
@@ -268,6 +306,8 @@ class Agent:
         entry.update(
             page_changed=state["page"]["fingerprint"] != page["fingerprint"],
             url=state["page"]["url"],
+            content_fingerprint=hashlib.sha256((state["page"]["url"] + "\n" +
+                " ".join(state["page"]["text"].split())).encode()).hexdigest(),
             elapsed_ms=state["elapsed_ms"],
         )
         if state["record"] and state["page"].get("screenshot"):
@@ -282,6 +322,11 @@ class Agent:
         if state["status"] == "blocked":
             state["stop_reason"] = "No page change after 3 actions"
         recent = executed[-4:]
+        if (len(recent) == 4 and all(h["kind"] == "click" for h in recent)
+                and all(h.get(key) == recent[0].get(key) for h in recent
+                        for key in ("node", "action", "source_url", "url", "content_fingerprint"))):
+            state["status"] = "blocked"
+            state["stop_reason"] = "repeated click without new visible content"
         if (
             len(recent) == 4
             and all(h["kind"] == "click" for h in recent)
@@ -290,6 +335,9 @@ class Agent:
         ):
             state["status"] = "blocked"
             state["stop_reason"] = "repeated two-action loop"
+        if state["status"] != "blocked" and repeated_navigation_cycle(executed):
+            state["status"] = "blocked"
+            state["stop_reason"] = "repeated navigation cycle"
 
     def run(self):
         while self.state["status"] not in {"done", "blocked"}:

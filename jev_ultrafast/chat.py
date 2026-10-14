@@ -3,6 +3,7 @@
 import copy
 import ipaddress
 import json
+import os
 import secrets
 import sqlite3
 import threading
@@ -15,8 +16,10 @@ from .agent import Agent, open_blank
 from .browser import NoHistory, StalePage, validate_viewport
 from .manual import Manual
 from .model import MissingValue
+from .model_runtime import ModelBudgetExceeded, ModelPaused, ModelRuntime, request_scope
 from .preview import Preview
 from .questions import MAX_STEPS
+from .task_context import model_context, new_task, remember, set_requirements, update_checks
 from .timing import Timings, timed
 
 LANGUAGES = {"pt-BR": "Brazilian Portuguese", "en": "English", "es": "Spanish", "fr": "French"}
@@ -154,6 +157,8 @@ class ChatSession:
         self.lock = threading.RLock()
         self.worker = None
         self.pause_requested = threading.Event()
+        self.model_runtime = ModelRuntime(self.pause_requested, on_change=self._publish)
+        self.task_context = new_task()
         self.messages = []
         self.calls = []
         self.turns = []
@@ -171,7 +176,6 @@ class ChatSession:
         self.pending_input = None
         self.input_ids = set()
         self.approved_commitment = False
-        self.recovery_attempts = 0
         self.reconsidered_block = False
         self.navigation = []
         self.resume_stage = "begin"
@@ -186,6 +190,12 @@ class ChatSession:
         session.id = record["id"]
         session.preview.session_id = session.id
         session.messages = record["messages"]
+        session.task_context = copy.deepcopy(record.get("task_context") or new_task())
+        session.task_context["stale"] = True
+        for observation in session.task_context["observations"]:
+            observation["stale"] = True
+        for requirement in session.task_context["requirements"]:
+            requirement["status"] = "unknown"
         for message in session.messages:
             if message.get("verification") and (
                 message["verification"].get("checks") or message["verification"].get("satisfied")
@@ -212,6 +222,7 @@ class ChatSession:
     def _attach_timings(self):
         self.timings.extend(self.agent.timings.snapshot()["events"])
         self.agent.timings = self.agent.browser.timings = self.timings
+        self.agent.on_action = self._publish
 
     def snapshot(self, compact=False):
         with self.manual.lock:
@@ -224,6 +235,9 @@ class ChatSession:
                 omitted = {"page", "decisions", "history", "text_calls", "elements", "chat_calls",
                            "turns", "initial_page", "navigation", "viewport_events", "conversation", "plan"}
                 source = {k: v for k, v in source.items() if k not in omitted}
+                source["task_context"] = {key: value for key, value in source["task_context"].items()
+                                          if key not in {"observations", "model_usage"}}
+                source["model_usage"] = {key: value for key, value in source["model_usage"].items() if key != "calls"}
                 page = self.view.get("page")
                 source["page"] = {k: page[k] for k in ("url", "title", "w", "h")} if page else None
                 decision = source.get("decision")
@@ -232,6 +246,9 @@ class ChatSession:
             view = frozen(source)
             view["viewport"] = dict(zip(("width", "height"), self.viewport)) if self.viewport else None
         view["preview_revision"] = self.preview.revision
+        if not self.task_context["stale"]:
+            usage = self.model_runtime.snapshot()
+            view["model_usage"] = {key: value for key, value in usage.items() if key != "calls"} if compact else usage
         if not compact and view.get("page"):
             capture = self.preview.snapshot()["capture"]
             if capture and capture["revision"] == view["preview_revision"] and not (
@@ -254,7 +271,7 @@ class ChatSession:
                           ),
                           "first_action_ms": view.get("first_action_ms")}
         view["pause_requested"] = self.pause_requested.is_set() and view["chat_status"] in {
-            "thinking", "running"
+            "thinking", "running", "verifying"
         }
         if view["pause_requested"]:
             view["progress"] = "Pausa solicitada. Aguardando a operação em andamento terminar…"
@@ -279,10 +296,16 @@ class ChatSession:
             "started_at": None, "stop_reason": None,
         }
         if browser_state.get("page"):
+            remember(self.task_context, browser_state["page"])
             self.last_url = browser_state["page"].get("url") or self.last_url
             if self.pending_viewport is None:
                 self.preview.request(self.agent.browser, browser_state["page"])
         history = browser_state["history"]
+        if self.agent and not self.task_context["stale"]:
+            self.task_context["actions"] = [{key: item.get(key) for key in
+                                            ("step", "action", "kind", "execution",
+                                             "page_changed", "source_url", "url")}
+                                           for item in history[-MAX_STEPS:]]
         first = next((h for h in history if h.get("executed_ms") is not None), None)
         first_ms = None
         if first and self.turn_started is not None and (browser_state["started_at"] or 0) >= self.turn_started:
@@ -310,11 +333,19 @@ class ChatSession:
             "action_count": len(history),
             "decision_count": len(browser_state.get("decisions", [])),
             "first_action_ms": first_ms,
+            "outcome": "incomplete" if self.phase == "completed" and self.messages
+            and self.messages[-1].get("verification", {}).get("satisfied") is False else self.phase,
+            "task_context": self.task_context,
+            "model_usage": self.task_context.get("model_usage", self.model_runtime.snapshot())
+            if self.task_context["stale"] else self.model_runtime.snapshot(),
         }
+        if not self.task_context["stale"]:
+            self.task_context["model_usage"] = view["model_usage"]
         with self.lock:
             self.view = frozen(view)
         if self.on_change:
-            projection = json.dumps((view["messages"], view["chat_status"], view["last_url"]), ensure_ascii=False)
+            projection = json.dumps((view["messages"], view["chat_status"], view["last_url"], view["task_context"]),
+                                    ensure_ascii=False)
             if projection != self.persisted:
                 try:
                     self.on_change(view)
@@ -343,7 +374,20 @@ class ChatSession:
 
     def _work(self, target, args):
         try:
-            target(*args)
+            with request_scope(self.model_runtime):
+                target(*args)
+        except ModelPaused:
+            stage = "finish" if self.phase == "verifying" else "begin" if self.phase == "thinking" else "run"
+            self._paused(stage=stage)
+        except ModelBudgetExceeded as error:
+            if self.agent:
+                self.agent.state["decision"] = None
+                self.agent.state["status"] = "ready"
+                with request_scope(self.model_runtime):
+                    self._finish(pause_reason=str(error))
+            else:
+                self._paused(str(error), kind="technical_pause", pause_code="model_budget",
+                             verification={"satisfied": False, "checks": [], "evidence": []})
         except Exception as error:
             # An interrupted mutation is never replayed, even if its result could not be observed.
             if self.agent:
@@ -356,8 +400,12 @@ class ChatSession:
                 stage = "finish" if self.phase == "verifying" else "run"
                 self.agent.state["status"] = "ready"
                 self.agent.state["stop_reason"] = str(error)
-                self._paused(text, stage=stage, kind="technical_pause", pause_code="failure",
-                             verification={"satisfied": False, "evidence": []})
+                try:
+                    with request_scope(self.model_runtime):
+                        self._finish(pause_reason=text)
+                except Exception:
+                    self._paused(text, stage=stage, kind="technical_pause", pause_code="failure",
+                                 verification={"satisfied": False, "evidence": []})
             else:
                 self.phase = "error"
                 self.turn_finished = time.perf_counter()
@@ -464,6 +512,8 @@ class ChatSession:
             )
         self.conversation = conversation_context(self.messages)
         self.goal = self.task = value
+        self.task_context = new_task(value, message_id)
+        self.model_runtime = ModelRuntime(self.pause_requested, on_change=self._publish)
         self.locale = locale
         self.turn_started = time.perf_counter()
         self.timings.reset(self.turn_started)
@@ -472,7 +522,6 @@ class ChatSession:
         self.approved_commitment = False
         self.manual.wait_ms = 0
         self.manual.can_resume = False
-        self.recovery_attempts = 0
         self.reconsidered_block = False
         self.turn_id = message_id
         self.message_ids.add(message_id)
@@ -485,11 +534,48 @@ class ChatSession:
 
     def _context(self):
         return {
-            "goal": self.task,
+            "goal": self.goal,
+            "resolved_task": self.task,
+            "current_turn_id": self.turn_id,
             "response_language": LANGUAGES[self.locale],
             "conversation": self.conversation,
             "page": assistant.page_context(self.agent.state["page"]),
+            "task_context": model_context(self.task_context),
         }
+
+    def _plan(self, stage, reason):
+        if any(item["stage"] == stage for item in self.task_context["escalations"]):
+            return False
+        history = self.agent.state["history"]
+        if self.approved_commitment or self.manual.status != "off" or any(
+            item.get("execution") in {"requested", "uncertain"} or item.get("kind") == "manual" for item in history
+        ):
+            return False
+        escalation = {"stage": stage, "reason": reason, "status": "pending",
+                      "model": os.environ.get("DEEP_MODEL", "deepseek/deepseek-v4.1-flash")}
+        self.task_context["escalations"].append(escalation)
+        self.progress = "Revisando os requisitos e a próxima etapa…"
+        self._publish()
+        context = {**self._context(), "task_context": model_context(self.task_context, observations=True),
+                   "reason": reason, "recent_actions": [
+                       {key: item.get(key) for key in ("action", "kind", "execution", "page_changed")}
+                       for item in history[-10:]]}
+        try:
+            planned = self._ask("plan", context)
+        except (ModelPaused, ModelBudgetExceeded):
+            escalation["status"] = "interrupted"
+            raise
+        except (ValueError, RuntimeError):
+            escalation["status"] = "error"
+            return False
+        set_requirements(self.task_context, planned["requirements"], self.conversation)
+        if not self.task_context["coverage_valid"]:
+            escalation["status"] = "invalid"
+            return False
+        self.task_context["guidance"] = {key: planned[key] for key in
+                                         ("objective", "evidence_needed", "next_subgoal")}
+        escalation["status"] = "ok"
+        return True
 
     def _ask(self, kind, context):
         before = len(self.calls)
@@ -516,6 +602,7 @@ class ChatSession:
                 "request",
                 {
                     "goal": self.goal,
+                    "current_turn_id": self.turn_id,
                     "response_language": LANGUAGES[self.locale],
                     "conversation": self.conversation,
                     "current_url": self.agent.state["page"]["url"] if self.agent else None,
@@ -524,11 +611,15 @@ class ChatSession:
             )
             # The restatement drives navigation; final verification keeps the original requirements.
             self.task = route["task"].strip() or self.goal  # page questions often come back without a restatement
+            self.task_context["resolved_task"] = self.task
+            set_requirements(self.task_context, route["requirements"], self.conversation)
             if route["intent"] == "task":
                 # References are resolved above; earlier assistant claims must not become task facts.
                 self.conversation = [message for message in self.conversation if message["role"] == "user"]
             if route["url"] != "-":
-                url = routed_url(route["url"], self.goal)
+                # Only anchored user quotes may authorize a referenced local destination.
+                references = "\n".join(item["source_quote"] for item in self.task_context["requirements"])
+                url = routed_url(route["url"], self.goal + "\n" + references)
                 if self.pause_requested.is_set():
                     self._paused(stage="begin")
                     return
@@ -564,7 +655,9 @@ class ChatSession:
         self._apply_viewport()
         # A tab opened for this goal was observed a moment ago; a resize re-observes it itself.
         self.agent.start_task(self.task, self.conversation, observe=not opened or self.viewport_error is not None)
+        self.agent.state["task_context"] = self.task_context
         self.initial_page = assistant.page_context(self.agent.state["page"])
+        remember(self.task_context, self.agent.state["page"])
         self._publish()
         if self.pause_requested.is_set():
             self._paused(stage="begin")
@@ -583,6 +676,8 @@ class ChatSession:
             self.turn_finished = time.perf_counter()
             self._publish()
             return
+        if route["needs_planning"] or not self.task_context["coverage_valid"]:
+            self._plan("initial", "Tarefa com objetivos dependentes ou requisitos que precisam de revisão.")
         self._run()
 
     def _paused(self, text="Execução pausada. Você pode continuar ou enviar um novo pedido.", stage="run",
@@ -635,9 +730,8 @@ class ChatSession:
         if self.reconsidered_block:
             self.agent.state["decision"] = None
             self.agent.state["status"] = "ready"
-            self._paused("Não encontrei uma ação segura para avançar. A tarefa está pausada; "
-                         "use Continuar para observar a página novamente.",
-                         kind="technical_pause", pause_code="no_action")
+            self._finish(pause_reason="Não encontrei uma ação segura para avançar. A tarefa está pausada; "
+                         "use Continuar para observar a página novamente.")
             return True
         self.reconsidered_block = True
         self.agent.state["verification_feedback"] = [
@@ -694,6 +788,8 @@ class ChatSession:
         self._run()
 
     def _run(self):
+        if self.phase in {"completed", "answered", "error"}:
+            return
         self.phase = "running"
         stale_attempts = 0
         ambiguous_attempts = 0
@@ -730,10 +826,9 @@ class ChatSession:
                     self.agent.state["decision"] = None
                     self.agent.state["status"] = "ready"
                     if ambiguous_attempts:
-                        self._paused("As alternativas de operação ou alvo continuam empatadas. "
-                                     "A tarefa foi pausada antes de executar uma ação. "
-                                     "Use Continuar para tentar novamente.",
-                                     kind="technical_pause", pause_code="ambiguous_decision")
+                        self._finish(pause_reason=(
+                            "As alternativas de operação ou alvo continuam empatadas. "
+                            "A tarefa foi pausada antes de executar uma ação. Use Continuar para tentar novamente."))
                         return
                     ambiguous_attempts += 1
                     self.agent.state["page"] = self.agent.browser.observe(screenshot=False)
@@ -747,15 +842,26 @@ class ChatSession:
                         self._publish()
                         context = {**self._context(), "action": {
                             k: action[k] for k in ("kind", "label", "role", "value", "current_value",
-                                                  "checked", "selected", "expanded") if k in action
+                                                  "checked", "selected", "expanded", "href", "context", "form",
+                                                  "search_submit", "form_submit", "form_values",
+                                                  "navigation") if k in action
                         }}
                         if action["kind"] == "fill":
-                            with ThreadPoolExecutor(max_workers=1) as pool:
-                                generated = pool.submit(self.agent.prepare_text, action, page)
-                                safety = self._ask("safety", context)
-                                generated.result()
+                            context["action"]["prepared_text"] = self.agent.prepare_text(action, page)[0]
+                        if assistant.ordinary_search(context["action"]):
+                            safety = {"effect": "safe", "description": "Controle de pesquisa observado."}
                         else:
                             safety = self._ask("safety", context)
+                        form = context["action"].get("form") or {}
+                        if (context["action"].get("form_submit")
+                                and not context["action"].get("search_submit")
+                                and form.get("role") != "search"
+                                and form.get("method", "get").lower() == "post"):
+                            safety = {**safety, "effect": "confirm",
+                                      "description": "Este botão envia o formulário ao site."}
+                        elif (safety["effect"] != "safe"
+                                and not assistant.action_needs_confirmation(context["action"])):
+                            safety["effect"] = "safe"
                         if self.pause_requested.is_set():
                             self._paused()
                             return
@@ -810,8 +916,8 @@ class ChatSession:
                         "A execução foi pausada para evitar novas chamadas sem progresso. "
                         "Use Continuar quando estiver pronta."
                     )
-                    if executed_after and not self.pause_requested.is_set():
-                        self._finish(allow_recovery=False, pause_reason=reason)
+                    if not self.pause_requested.is_set():
+                        self._finish(pause_reason=reason)
                     else:
                         self._paused(reason)
                     return
@@ -823,13 +929,13 @@ class ChatSession:
             reason = self.agent.state.get("stop_reason") or "Não foi possível avançar nesta página."
             self.agent.state["decision"] = None
             self.agent.state["status"] = "ready"
-            self._finish(allow_recovery=False, pause_reason=(
+            self._finish(pause_reason=(
                 f"A tarefa foi pausada por falta de progresso: {reason}. Use Continuar para tentar novamente."
             ))
             return
         self._finish()
 
-    def _finish(self, allow_recovery=True, *, pause_reason=None):
+    def _finish(self, *, pause_reason=None):
         if self.manual.status == "requested":
             self._paused(stage="run" if pause_reason else "finish")
             return
@@ -847,31 +953,19 @@ class ChatSession:
             verdict = {"satisfied": False, "evidence": [], "checks": [],
                        "reason": "A página mudou durante a conferência. Verifique o resultado novamente."}
         checks = verdict.get("checks", [])
+        update_checks(self.task_context, checks)
         if self.manual.status == "requested":
             self._paused(stage="run" if pause_reason else "finish")
             return
-        if pause_reason and (not verdict["satisfied"] or self.pause_requested.is_set()):
-            self._paused(pause_reason, kind="technical_pause", pause_code="no_progress")
+        if self.pause_requested.is_set():
+            self._paused(stage="finish")
             return
-        history = self.agent.state["history"]
-        if (
-            allow_recovery and not verdict["satisfied"] and self.agent.state["status"] == "done"
-            and self.recovery_attempts < 2 and not self.approved_commitment
-            and all(item["execution"] != "uncertain" for item in history)
-            and (any(check["status"] == "not_met" for check in checks)
-                 or (any(check["status"] == "confirmed" for check in checks)
-                     and any(check["status"] == "unknown" for check in checks)))
-            and len(history) < MAX_STEPS and len(self.agent.state["decisions"]) < MAX_STEPS * 2
-        ):
-            self.recovery_attempts += 1
-            self.agent.state["verification_feedback"] = [
-                {"requirement": check["requirement"], "reason": check["reason"]}
-                for check in checks if check["status"] != "confirmed"
-            ]
-            self.agent.state["status"] = "ready"
-            self.progress = "Resultado incompleto; escolhendo uma ação corretiva…"
-            self._publish()
-            self._run()
+        if verdict.get("budget_exhausted"):
+            self._paused(verdict["reason"], stage="finish", kind="technical_pause", pause_code="model_budget",
+                         verification=verdict)
+            return
+        if pause_reason and not verdict["satisfied"]:
+            self._paused(pause_reason, kind="technical_pause", pause_code="no_progress", verification=verdict)
             return
         if verdict["satisfied"]:
             response = verdict["reply"]
@@ -883,6 +977,9 @@ class ChatSession:
                 response += f" {verdict['reason']}"
             if self.agent.state.get("stop_reason"):
                 response += f" A execução parou: {self.agent.state['stop_reason']}."
+            pending = [check["requirement"] for check in checks if check["status"] != "confirmed"]
+            if pending:
+                response += " Pendências: " + "; ".join(pending) + "."
         verdict.update(checked_at=checked_at, url=observed["url"])
         self._reply(response, kind="result", verification=verdict)
         self.phase = "completed"
@@ -898,9 +995,16 @@ class ChatSession:
         try:
             with self.timings.measure("helper_verify"):
                 return assistant.verify(context, self.calls)
-        except Exception:
-            return {"satisfied": False, "evidence": [], "checks": [],
-                    "reason": "Não foi possível executar a conferência do resultado. Verifique novamente."}
+        except ModelPaused:
+            raise
+        except Exception as error:
+            return {"satisfied": False, "evidence": [], "checks": [
+                {"requirement_id": item["id"], "requirement": item["description"], "status": "unknown",
+                 "evidence": [], "reason": "A conferência não foi concluída."}
+                for item in self.task_context["requirements"]],
+                    "reason": str(error) if isinstance(error, ModelBudgetExceeded) else
+                    "Não foi possível executar a conferência do resultado. Verifique novamente.",
+                    "budget_exhausted": isinstance(error, ModelBudgetExceeded)}
         finally:
             for call in self.calls[before:]:
                 call["turn_id"] = self.turn_id
@@ -969,7 +1073,7 @@ class ChatSession:
         self.phase, self.progress = "verifying", "Conferindo novamente, sem repetir as ações…"
         self.turn_finished = None
         self._publish()
-        self._launch(self._finish, False)
+        self._launch(self._finish)
 
     def approve(self, body):
         self._check_idle()
@@ -1032,7 +1136,7 @@ class ChatSession:
         self._publish()
 
     def pause(self):
-        if self.phase not in {"thinking", "running"}:
+        if self.phase not in {"thinking", "running", "verifying"}:
             raise ValueError("Não há uma execução para pausar.")
         self.pause_requested.set()
 
@@ -1046,7 +1150,10 @@ class ChatSession:
         self.turn_finished = None
         self.phase, self.progress = "running", "Continuando a tarefa…"
         self._publish()
-        self._launch({"begin": self._begin, "finish": self._finish}.get(self.resume_stage, self._resume_run))
+        if self.resume_stage == "finish":
+            self._launch(self._finish)
+        else:
+            self._launch(self._begin if self.resume_stage == "begin" else self._resume_run)
 
     def close(self):
         self._check_idle()

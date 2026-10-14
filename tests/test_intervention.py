@@ -37,6 +37,7 @@ def test_unsupported_human_reason_cannot_open_manual_control(session, offline, m
     assert view["chat_status"] == "paused" and not view["manual"]["suggested"]
     assert view["messages"][-1]["kind"] == "technical_pause"
     assert len(session.agent.state["decisions"]) == 2 and session.agent.browser.mutations == []
+    assert not view["task_context"]["escalations"]
 
 
 def ask_city(session, offline, monkeypatch):

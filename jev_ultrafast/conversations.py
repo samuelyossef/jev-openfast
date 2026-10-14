@@ -30,6 +30,8 @@ class ConversationStore:
                     connection.execute("ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
                 if "title_custom" not in columns:
                     connection.execute("ALTER TABLE conversations ADD COLUMN title_custom INTEGER NOT NULL DEFAULT 0")
+                if "task_context" not in columns:
+                    connection.execute("ALTER TABLE conversations ADD COLUMN task_context TEXT NOT NULL DEFAULT '{}'")
                 connection.execute(
                     "CREATE TABLE IF NOT EXISTS selection (id INTEGER PRIMARY KEY CHECK (id = 1), conversation_id TEXT)"
                 )
@@ -48,14 +50,15 @@ class ConversationStore:
         with self._connect() as db:
             db.execute(
                 "INSERT INTO conversations "
-                "(id, title, updated_at, messages, phase, last_url) VALUES (?, ?, ?, ?, ?, ?) "
+                "(id, title, updated_at, messages, phase, last_url, task_context) VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "title=CASE WHEN conversations.title_custom=0 AND conversations.title='Nova conversa' "
                 "THEN excluded.title ELSE conversations.title END, "
                 "updated_at=excluded.updated_at, messages=excluded.messages, phase=excluded.phase, "
-                "last_url=COALESCE(excluded.last_url, conversations.last_url)",
+                "last_url=COALESCE(excluded.last_url, conversations.last_url), task_context=excluded.task_context",
                 (state["session_id"], title, time.time_ns() // 1_000_000, json.dumps(messages, ensure_ascii=False),
-                 state["chat_status"], page.get("url") or state.get("last_url")),
+                 state["chat_status"], page.get("url") or state.get("last_url"),
+                 json.dumps(state.get("task_context", {}), ensure_ascii=False)),
             )
 
     def list(self):
@@ -72,11 +75,12 @@ class ConversationStore:
     def load(self, conversation_id):
         with self._connect() as db:
             row = db.execute(
-                "SELECT messages, phase, last_url FROM conversations WHERE id=?", (conversation_id,)
+                "SELECT messages, phase, last_url, task_context FROM conversations WHERE id=?", (conversation_id,)
             ).fetchone()
         if row is None:
             raise ValueError("Conversa não encontrada.")
-        return {"id": conversation_id, "messages": json.loads(row[0]), "phase": row[1], "last_url": row[2]}
+        return {"id": conversation_id, "messages": json.loads(row[0]), "phase": row[1], "last_url": row[2],
+                "task_context": json.loads(row[3])}
 
     def delete(self, conversation_id):
         with self._connect() as db:

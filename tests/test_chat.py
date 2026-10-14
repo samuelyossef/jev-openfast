@@ -35,7 +35,7 @@ class FakeBrowser:
             "w": 1120,
             "h": 780,
             "actions": [
-                {"id": "e1", "node": 1, "kind": "click", "role": "button", "label": "Buscar"},
+                {"id": "e1", "node": 1, "kind": "click", "role": "button", "label": "Abrir resultado"},
                 {"id": "e2", "node": 2, "kind": "click", "role": "button", "label": "Publicar"},
                 {"id": "e3", "node": 3, "kind": "fill", "role": "textbox", "label": "Título", "value": ""},
             ],
@@ -97,7 +97,7 @@ def offline(monkeypatch):
     decision_calls = []
     config = {"bad_safety": False, "bad_safety_once": False, "bad_evidence": False,
               "false_verdict": False, "force_success_reply": False, "block": None, "route": None,
-              "verify_sequence": [], "task": None}
+              "verify_sequence": [], "task": None, "safety_effect": None}
 
     def choose(page, goal, history, **kwargs):
         decision_calls.append({"goal": goal, "history": copy.deepcopy(history), **kwargs})
@@ -130,14 +130,23 @@ def offline(monkeypatch):
                 "reply": "Vou verificar o destino.",
             }
             output = {"intent": "answer" if context["goal"].startswith("?") else "task",
-                      "task": config["task"] or context["goal"], **output}
+                      "task": config["task"] or context["goal"], "needs_planning": config.get("needs_planning", False),
+                      "requirements": config.get("requirements", [{"description": context["goal"],
+                          "source_quote": context["goal"], "source_turn_id": ""}]), **output}
+        elif kind == "plan":
+            requirements = context["task_context"]["requirements"]
+            output = {"objective": context["goal"], "evidence_needed": "Resultado visível",
+                      "next_subgoal": "Obter a evidência pendente", "requirements": [
+                          {key: item[key] for key in ("description", "source_quote", "source_turn_id")}
+                          for item in requirements if not item.get("constraint")]}
         elif kind == "answer":
             output = {
                 "reply": context["page"]["text"],
             }
         elif kind == "safety":
             output = {
-                "effect": "confirm" if "publique" in context["goal"].lower() else "safe",
+                "effect": config["safety_effect"] or
+                         ("confirm" if "publique" in context["goal"].lower() else "safe"),
                 "description": "Publicar este conteúdo?",
             }
             if config["bad_safety"] or config["bad_safety_once"]:
@@ -155,6 +164,9 @@ def offline(monkeypatch):
                             "reason": "Resultado observado." if confirmed else "Evidência insuficiente."}],
             }
             output = {**output, "reply": "Encontrei o resultado."}
+            requirements = context.get("task_context", {}).get("requirements", [])
+            for check, requirement in zip(output["checks"], requirements):
+                check.setdefault("requirement_id", requirement["id"])
         else:
             output = {
                 "reply": "Encontrei o resultado."
@@ -232,14 +244,14 @@ def test_tied_decision_reobserves_once_then_executes_or_pauses(offline, monkeypa
         assert view["messages"][-1]["verification"]["satisfied"]
 
 
-def test_text_and_safety_overlap_without_early_input(offline, monkeypatch):
+def test_prepared_text_reaches_safety_before_input(offline, monkeypatch):
     session = chat.ChatSession("https://example.org")
     text_started, safety_started = threading.Event(), threading.Event()
     original = session._ask
 
     def generate(_context):
         text_started.set()
-        assert safety_started.wait(2)
+        assert not safety_started.is_set()
         assert not session.agent.browser.mutations
         return "Título aprovado", {"model": "offline", "latency_ms": 1}
 
@@ -248,6 +260,7 @@ def test_text_and_safety_overlap_without_early_input(offline, monkeypatch):
             safety_started.set()
             assert text_started.wait(2)
             assert not session.agent.browser.mutations
+            assert context["action"]["prepared_text"] == "Título aprovado"
         return original(kind, context)
 
     monkeypatch.setattr(agent, "field_text", generate)
@@ -295,7 +308,7 @@ def test_changed_negative_verdict_cannot_trigger_a_corrective_action(offline, mo
     view = send(session)
     assert not view["messages"][-1]["verification"]["satisfied"]
     assert "mudou durante" in view["messages"][-1]["content"]
-    assert len(session.agent.browser.mutations) == 1 and session.recovery_attempts == 0
+    assert len(session.agent.browser.mutations) == 1
 
 
 def test_blocked_capture_cannot_delay_task_or_compact_state(offline, monkeypatch):
@@ -394,7 +407,6 @@ def test_stalled_progress_checks_outcome_without_repeating_mutations(offline, mo
     assert len(session.agent.browser.mutations) == (1 if stall == "stale" else 3)
     assert len(offline[1]) == (4 if stall == "stale" else 3)
     assert sum(kind == "verify" for kind, _ in offline[0]) == 1
-    assert session.recovery_attempts == 0
 
 
 @pytest.mark.parametrize(
@@ -402,9 +414,10 @@ def test_stalled_progress_checks_outcome_without_repeating_mutations(offline, mo
     [
         ("Busque livros de colorir infantis de R$15 a R$25",
          "Resultados: Livro de colorir infantil — R$ 19,90", "confirmed",
-         ["Livro de colorir infantil", "R$ 19,90"], True),
+         ["Resultados: Livro de colorir infantil — R$ 19,90"], True),
         ("Busque livros de colorir infantis de R$15 a R$25",
-         "Resultados: Livro de colorir infantil — R$ 29,90", "not_met", ["R$ 29,90"], False),
+         "Resultados: Livro de colorir infantil — R$ 29,90", "not_met",
+         ["Resultados: Livro de colorir infantil — R$ 29,90"], False),
         ("Aplique um filtro de R$15 a R$25 aos livros de colorir infantis",
          "Resultados: Livro de colorir infantil — R$ 19,90", "unknown", [], False),
     ],
@@ -416,12 +429,12 @@ def test_price_search_stall_checks_fresh_results_without_more_clicks(
     session.goal = session.task = goal
     session.agent.browser.page.update(text=listing, fingerprint=listing)
     offline[2]["verify_sequence"] = [{"satisfied": satisfied, "checks": [
-        {"requirement": "Busca", "status": "confirmed", "evidence": ["Resultados"], "reason": "Busca enviada."},
+        {"requirement": "Busca", "status": "confirmed", "evidence": [listing], "reason": "Busca enviada."},
         {"requirement": "Preço", "status": price_status, "evidence": price_evidence,
          "reason": "Preço observado." if price_status != "unknown" else "Filtro não confirmado."},
     ]}]
 
-    session._finish(allow_recovery=False, pause_reason="repeated two-action loop")
+    session._finish(pause_reason="repeated two-action loop")
 
     view = session.snapshot()
     assert view["chat_status"] == ("completed" if satisfied else "paused")
@@ -436,7 +449,7 @@ def test_manual_interrupt_during_stall_verification_resumes_run(offline, monkeyp
         session.manual.status = "requested"
         return {"satisfied": True, "evidence": [], "checks": [], "reply": "Resultado"}
     monkeypatch.setattr(session, "_verify", verify)
-    session._finish(allow_recovery=False, pause_reason="Sem progresso")
+    session._finish(pause_reason="Sem progresso")
     assert session.phase == "paused"
     assert session.resume_stage == "run"
     assert not session.agent.browser.mutations
@@ -768,6 +781,90 @@ def test_approval_is_required_and_consumed_once(offline):
     assert len(session.agent.browser.mutations) == 1
 
 
+@pytest.mark.parametrize("action,expected", [
+    ({"kind": "click", "role": "button", "label": "button"}, False),
+    ({"kind": "fill", "role": "searchbox", "label": "Pesquisar"}, False),
+    ({"kind": "click", "form": {"role": "", "method": "get"}, "label": "Aplicar"}, False),
+    ({"kind": "click", "form": {"role": "", "method": "post"}, "form_submit": True,
+      "label": "button"}, True),
+    ({"kind": "fill", "form": {"role": "", "method": "get"}, "label": "CPF"}, True),
+    ({"kind": "click", "label": "Publicar conteúdo"}, True),
+])
+def test_safety_warning_requires_observed_commit_evidence(action, expected):
+    assert assistant.action_needs_confirmation(action) is expected
+
+
+@pytest.mark.parametrize("label,form,expected", [
+    ("Search", None, True),
+    ("Press Enter in Pesquisar", {"method": "get"}, True),
+    ("Pesquisar", {"method": "post"}, False),
+    ("Publicar", None, False),
+    ("Pesquisar com sua voz", None, False),
+])
+def test_search_fast_path_is_limited_to_ordinary_controls(label, form, expected):
+    assert assistant.ordinary_search({"kind": "click", "label": label, "form": form}) is expected
+
+
+def test_search_fast_path_keeps_auto_save_and_personal_data_assessment():
+    for context in ("auto-save", "CPF", "enviar dados"):
+        assert not assistant.ordinary_search({"kind": "fill", "role": "searchbox",
+                                              "label": "Pesquisar", "context": context})
+
+
+def test_observed_search_runs_without_safety_model_call(offline):
+    session = chat.ChatSession("https://example.org")
+    session.agent.browser.page["actions"][0]["label"] = "Search"
+    view = send(session, "Busque um resultado")
+    assert view["chat_status"] == "completed"
+    assert len(session.agent.browser.mutations) == 1
+    assert not any(kind == "safety" for kind, _ in offline[0])
+
+
+@pytest.mark.parametrize("kind,role,label", [
+    ("click", "button", "button"),
+    ("fill", "searchbox", "Pesquisar"),
+])
+def test_spurious_confirmation_does_not_stop_browsing(offline, monkeypatch, kind, role, label):
+    _, _, config = offline
+    config["safety_effect"] = "confirm"
+    session = chat.ChatSession("https://example.org")
+    session.agent.browser.page["actions"].append({"id": "e4", "node": 4, "kind": kind,
+                                                    "role": role, "label": label})
+    original = agent.choose
+
+    def choose(page, goal, history, **kwargs):
+        if not history:
+            return {"choice": "e4", "operation": "TYPE_TEXT" if kind == "fill" else "CLICK",
+                    "target": "4", "probabilities": {"e4": 1}, "confidence": 1,
+                    "latency_ms": 1, "usage": {}}
+        return original(page, goal, history, **kwargs)
+
+    monkeypatch.setattr(agent, "choose", choose)
+    view = send(session)
+    assert view["chat_status"] == "completed"
+    assert view["approval"] is None
+    assert session.agent.browser.mutations == [("e4", "Título aprovado" if kind == "fill" else None)]
+    assert session.snapshot()["messages"][-1]["verification"]["satisfied"]
+
+
+def test_post_form_submit_requires_confirmation_even_if_model_says_safe(offline, monkeypatch):
+    _, _, config = offline
+    config["safety_effect"] = "safe"
+    session = chat.ChatSession("https://example.org")
+    session.agent.browser.page["actions"].append({
+        "id": "e4", "node": 4, "kind": "click", "role": "button", "label": "button",
+        "form": {"role": "", "method": "post"}, "form_submit": True,
+    })
+    monkeypatch.setattr(agent, "choose", lambda *_args, **_kwargs: {
+        "choice": "e4", "operation": "CLICK", "target": "4", "probabilities": {"e4": 1},
+        "confidence": 1, "latency_ms": 1, "usage": {},
+    })
+    view = send(session)
+    assert view["chat_status"] == "awaiting_confirmation"
+    assert "envia o formulário" in view["approval"]["description"]
+    assert not session.agent.browser.mutations
+
+
 def test_reject_stops_without_mutation_or_extra_model_calls(offline):
     calls, _, _ = offline
     session = chat.ChatSession("https://example.org")
@@ -851,21 +948,22 @@ def test_done_does_not_prove_completion(offline, setting):
     assert all(call["kind"] != "reply" for call in view["chat_calls"])
 
 
-@pytest.mark.parametrize("second_satisfied", [True, False])
 @pytest.mark.parametrize("missing_status", ["not_met", "unknown"])
-def test_premature_done_gets_bounded_corrective_rounds(offline, monkeypatch, second_satisfied, missing_status):
+def test_incomplete_done_reports_pending_requirements_without_restarting(offline, monkeypatch, missing_status):
     calls, decisions, config = offline
+    goal = "Abrir site e Abrir resultado; Preço"
+    config["requirements"] = [{"description": name, "source_quote": name, "source_turn_id": ""}
+                              for name in ("Abrir site", "Abrir resultado", "Preço")]
     # A partially completed task also corrects requirements not yet evidenced.
     missing = {"satisfied": False, "checks": [
+        {"requirement": goal, "status": "unknown", "evidence": [], "reason": "Pedido incompleto."},
         {"requirement": "Abrir site", "status": "confirmed", "evidence": ["Resultado disponível"],
          "reason": "Site aberto."},
         {"requirement": "Abrir resultado", "status": missing_status, "evidence": ["Resultado disponível"],
          "reason": "Resultado não aberto."},
         {"requirement": "Preço", "status": "unknown", "evidence": [], "reason": "Sem preço visível."}]}
-    config["verify_sequence"] = [missing, {"satisfied": second_satisfied, "checks": [
-        {"requirement": "Abrir resultado", "status": "confirmed" if second_satisfied else "not_met",
-         "evidence": ["Resultado disponível"], "reason": "Conferência final."}]}, missing]
-    sequence = iter(["e1", "DONE", "e4", "DONE", "DONE"])
+    config["verify_sequence"] = [missing]
+    sequence = iter(["e1", "DONE"])
     def choose(page, goal, history, **kwargs):
         selected = next(sequence)
         decisions.append({"goal": goal, "history": copy.deepcopy(history), **kwargs})
@@ -876,15 +974,21 @@ def test_premature_done_gets_bounded_corrective_rounds(offline, monkeypatch, sec
     session = chat.ChatSession("https://example.org")
     session.agent.browser.page["actions"].append({"id": "e4", "node": 4, "kind": "click",
                                                     "role": "link", "label": "Abrir resultado"})
-    view = send(session)
-    assert len(view["history"]) == 2
-    assert len(decisions) == (4 if second_satisfied else 5)
-    assert decisions[2]["verification_feedback"] == [
-        {"requirement": "Abrir resultado", "reason": "Resultado não aberto."},
-        {"requirement": "Preço", "reason": "Sem preço visível."}]
-    assert view["messages"][-1]["verification"]["satisfied"] is second_satisfied
-    assert len([kind for kind, _ in calls if kind == "verify"]) == (2 if second_satisfied else 3)
-    assert session.recovery_attempts == (1 if second_satisfied else 2)
+    view = send(session, goal)
+    assert view["chat_status"] == "completed" and view["outcome"] == "incomplete"
+    assert len(view["history"]) == 1 and len(decisions) == 2
+    assert not view["messages"][-1]["verification"]["satisfied"]
+    assert "Pendências:" in view["messages"][-1]["content"]
+    assert sum(kind == "verify" for kind, _ in calls) == 1
+    assert not any(kind == "plan" for kind, _ in calls)
+    # Late callbacks and UI polling cannot turn a completed task back into browser execution.
+    before = (len(calls), len(decisions), list(session.agent.browser.mutations))
+    session._run()
+    for _ in range(3):
+        assert session.snapshot()["chat_status"] == "completed"
+    assert (len(calls), len(decisions), session.agent.browser.mutations) == before
+    with pytest.raises(ValueError, match="Não há uma tarefa pausada"):
+        session.resume()
 
 
 def test_content_completion_prompts_require_detail_page_without_changing_list_goals():
@@ -1030,7 +1134,7 @@ def test_evidence_spanning_adjacent_text_nodes_counts_as_visible(monkeypatch):
     proposed["checks"][0]["evidence"] = ["É o 39.º presidente, tendo"]  # skips real page text
     assert assistant.verify({"page": page}, [])["satisfied"] is False
     proposed["checks"][0]["evidence"] = ["https://example.org..."]
-    assert assistant.verify({"page": page}, [])["satisfied"] is True
+    assert assistant.verify({"page": page}, [])["satisfied"] is False
     proposed["checks"][0]["evidence"] = ["https://example.org/other..."]
     assert assistant.verify({"page": page}, [])["satisfied"] is False
     proposed["checks"][0]["evidence"] = ['1-48 de mais de 20.000 resultados para "caneta azul"']
@@ -1086,7 +1190,9 @@ def test_resolved_task_drives_agent_but_verification_keeps_original_request(offl
     config["task"] = "Busque 'Lula presidente do Brasil' na Wikipédia"
     view = send(chat.ChatSession("https://example.org"), "busque na wikipidia")
     assert decisions[0]["goal"] == config["task"]
-    assert next(ctx["goal"] for kind, ctx in calls if kind == "safety") == config["task"]
+    safety = next(ctx for kind, ctx in calls if kind == "safety")
+    assert safety["goal"] == "busque na wikipidia"
+    assert safety["resolved_task"] == config["task"]
     verification = next(ctx for kind, ctx in calls if kind == "verify")
     assert verification["goal"] == "busque na wikipidia"
     assert verification["resolved_task"] == config["task"]
@@ -1185,7 +1291,8 @@ def test_invalid_safety_result_fails_before_mutation(offline):
     view = send(session)
     assert view["chat_status"] == "paused" and view["messages"][-1]["kind"] == "technical_pause"
     assert not session.agent.browser.mutations
-    assert view["chat_calls"][-1]["status"] == "error"
+    assert next(call for call in view["chat_calls"] if call["kind"] == "safety")["status"] == "error"
+    assert view["chat_calls"][-1]["kind"] == "verify"
 
 
 def test_invalid_read_only_safety_call_retries_without_repeating_browser_action(offline):
@@ -1269,6 +1376,63 @@ def test_http_server_has_a_burst_tolerant_accept_queue():
     assert demo.DemoHTTPServer.request_queue_size == 64
 
 
+def test_document_routes_are_disabled(local_server):
+    client = local_server
+    for path in ("/api/documents", "/api/documents/example", "/api/documents/example/download"):
+        assert client.get(path).status_code == 404
+    for path in ("/api/documents/upload", "/api/documents/create", "/api/documents/revise",
+                 "/api/documents/delete"):
+        assert client.post(path, json={}).status_code == 404
+
+
+def test_technical_block_checks_existing_result_before_pausing(offline, monkeypatch):
+    session = chat.ChatSession("https://example.org")
+    session.agent.browser.page["text"] = "Resultado disponível"
+    monkeypatch.setattr(agent, "choose", lambda *args, **kwargs: {
+        "choice": "BLOCKED", "operation": "BLOCKED", "target": None,
+        "confidence": 1, "probabilities": {"BLOCKED": 1}, "latency_ms": 1, "usage": {}})
+    view = send(session)
+    assert view["chat_status"] == "completed" and view["messages"][-1]["verification"]["satisfied"]
+    assert not session.agent.browser.mutations
+    assert not view["task_context"]["escalations"]
+
+
+def test_complex_task_has_one_initial_review_and_shared_context(offline):
+    offline[2]["needs_planning"] = True
+    view = send(chat.ChatSession("https://example.org"))
+    assert view["messages"][-1]["verification"]["satisfied"]
+    assert [item["stage"] for item in view["task_context"]["escalations"]] == ["initial"]
+    decision = offline[1][0]["task_context"]
+    safety = next(context for kind, context in offline[0] if kind == "safety")["task_context"]
+    assert decision["original_goal"] == safety["original_goal"] == "Busque um resultado"
+    assert decision["guidance"]["next_subgoal"] == "Obter a evidência pendente"
+
+
+def test_field_helper_keeps_task_budget_scope(offline, monkeypatch):
+    from jev_ultrafast.model_runtime import CURRENT_RUNTIME
+    session = chat.ChatSession("https://example.org")
+    seen = []
+    def text(context):
+        seen.append(CURRENT_RUNTIME.get())
+        assert context["task_context"]["original_goal"] == "digite o título"
+        return "Título aprovado", {"model": "offline", "latency_ms": 1}
+    monkeypatch.setattr(agent, "field_text", text)
+    send(session, "digite o título")
+    assert seen == [session.model_runtime]
+
+
+def test_restored_task_context_has_stale_references_and_cannot_replay(offline):
+    original = chat.ChatSession("https://example.org")
+    view = send(original)
+    restored = chat.ChatSession.restore({"id": original.id, "messages": view["messages"],
+                                        "phase": "completed", "last_url": view["last_url"],
+                                        "task_context": view["task_context"]})
+    context = restored.snapshot()["task_context"]
+    assert context["stale"] and all(item["stale"] for item in context["observations"])
+    assert all(item["status"] == "unknown" for item in context["requirements"])
+    assert restored.agent is None and restored.worker is None
+
+
 def test_http_session_chat_restore_and_reject_raw_actions(local_server):
     client = local_server
     view = client.post("/api/session", json={"url": "https://example.org"}).json()
@@ -1295,6 +1459,32 @@ def test_http_session_chat_restore_and_reject_raw_actions(local_server):
     fresh = client.post("/api/session", json={"url": "http://127.0.0.1:8080"}).json()
     assert fresh["session_id"] != session_id and fresh["messages"] == []
     assert FakeBrowser.instances[0].closed
+
+
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_completed_http_task_stays_terminal_across_polling_and_recheck(local_server, offline, confirmed):
+    client = local_server
+    offline[2]["false_verdict"] = not confirmed
+    view = client.post("/api/session", json={"url": "https://example.org"}).json()
+    body = {"session_id": view["session_id"], "message": "Busque um resultado", "message_id": "once"}
+    assert client.post("/api/message", json=body).status_code == 200
+    demo.SESSION.worker.join(5)
+    before = (len(offline[0]), len(offline[1]), list(demo.SESSION.agent.browser.mutations))
+    for _ in range(3):
+        view = client.get("/api/state").json()
+        assert view["chat_status"] == "completed"
+        assert view["messages"][-1]["verification"]["satisfied"] is confirmed
+    assert client.post("/api/message", json=body).status_code == 200  # duplicate delivery
+    assert client.post("/api/resume", json={"session_id": view["session_id"]}).status_code == 400
+    assert (len(offline[0]), len(offline[1]), demo.SESSION.agent.browser.mutations) == before
+    if not confirmed:
+        assert client.post("/api/verify", json={"session_id": view["session_id"]}).status_code == 200
+        demo.SESSION.worker.join(5)
+        assert len(offline[1]) == before[1] and demo.SESSION.agent.browser.mutations == before[2]
+    # A genuinely new message still starts a new task.
+    assert client.post("/api/message", json={**body, "message_id": "new-request"}).status_code == 200
+    demo.SESSION.worker.join(5)
+    assert len(demo.SESSION.agent.browser.mutations) == len(before[2]) + 1
 
 
 def test_http_viewport_initial_capture_validation_and_session_binding(local_server):

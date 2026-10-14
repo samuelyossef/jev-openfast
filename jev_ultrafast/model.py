@@ -8,6 +8,7 @@ from collections import Counter
 
 import httpx
 
+from .model_runtime import CURRENT_DEADLINE, CURRENT_RUNTIME, ModelPaused, deadline_scope, model_options
 from .questions import BLOCKED_REASON, BLOCKED_REASONS, NEXT_ACTION, TARGET, TEXT_VALUE
 from .secrets_store import load_openrouter_key, openrouter_key_source
 
@@ -25,12 +26,21 @@ class InvalidOutput(ValueError):
     """A model answered, but not with a usable choice or value. Nothing was executed."""
 
 
+class ModelProviderError(RuntimeError):
+    def __init__(self, error):
+        self.code = error.get("code")
+        metadata = error.get("metadata")
+        self.error_type = metadata.get("error_type") if isinstance(metadata, dict) else None
+        super().__init__("O provedor não conseguiu responder; nenhuma ação foi executada.")
+
+
 def reask_once(call):
     """Model requests never touch the browser, so one malformed answer is asked again before the task stops."""
-    try:
-        return call()
-    except InvalidOutput:
-        return call()
+    with deadline_scope(25):
+        try:
+            return call()
+        except InvalidOutput:
+            return call()
 
 
 def openrouter_key():
@@ -63,7 +73,7 @@ def openrouter_key_status():
 
 
 RETRY_STATUS = {429, 502, 503, 529}
-ATTEMPTS = 5  # waits about 1+2+4+8 s; model requests never touch the browser, so retrying them is safe
+ATTEMPTS = 2  # Read-only model calls may retry; browser mutations never do.
 
 
 def retry_delay(response, attempt):
@@ -75,15 +85,48 @@ def retry_delay(response, attempt):
 
 
 def post_json(url, key, body, *, on_attempt=None):
+    runtime = CURRENT_RUNTIME.get()
+    deep = body.get("model") == os.environ.get("DEEP_MODEL", "deepseek/deepseek-v4.1-flash")
+    deadline = CURRENT_DEADLINE.get() or time.monotonic() + (45 if deep else 25)
     for attempt in range(ATTEMPTS):
+        if runtime and runtime.pause.is_set():
+            raise ModelPaused("Pausa solicitada antes da chamada ao modelo.")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("O prazo da chamada ao modelo terminou; nenhuma ação foi executada.")
+        record = runtime.reserve(body, url) if runtime else None
         if on_attempt:
             on_attempt()
         try:
-            response = CLIENT.post(url, json=body, headers={"Authorization": f"Bearer {key}"})
-        except httpx.HTTPError:
+            response = CLIENT.post(url, json=body, headers={"Authorization": f"Bearer {key}"}, timeout=remaining)
+            result = response.json() if not response.is_error else None
+        except (httpx.HTTPError, ValueError) as error:
+            if runtime:
+                runtime.finish(record, error=error)
             raise RuntimeError("Falha de conexão com o provedor do modelo; nenhuma ação foi executada") from None
+        provider_error = result.get("error") if isinstance(result, dict) else None
+        if runtime:
+            runtime.finish(record, result, error=response.is_error or bool(provider_error))
+        if runtime and runtime.pause.is_set():
+            raise ModelPaused("Pausa solicitada durante a chamada ao modelo.")
+        if isinstance(provider_error, dict):
+            error = ModelProviderError(provider_error)
+            if (url == CHAT_URL and body.get("model") == "inception/mercury-2.5"
+                    and error.code == 502 and error.error_type == "provider_unavailable"
+                    and attempt < ATTEMPTS - 1):
+                # Mercury can refuse ordinary browser tasks about other models; retry only the read-only call.
+                body = {key: value for key, value in body.items() if key not in {"reasoning", "provider"}}
+                fallback = "qwen/qwen3-30b-a3b-instruct-2507"
+                body.update(model=fallback, **model_options(fallback, client=CLIENT))
+                continue
+            raise error
         if response.status_code in RETRY_STATUS and attempt < ATTEMPTS - 1:
-            time.sleep(retry_delay(response, attempt))
+            delay = min(retry_delay(response, attempt), max(0, deadline - time.monotonic()))
+            if runtime:
+                if runtime.pause.wait(delay):
+                    raise ModelPaused("Pausa solicitada durante a espera do provedor.")
+            else:
+                time.sleep(delay)
             continue
         if response.status_code == 429:
             raise RuntimeError("o provedor do modelo está limitando as requisições (HTTP 429). "
@@ -91,7 +134,7 @@ def post_json(url, key, body, *, on_attempt=None):
         if response.is_error:
             raise RuntimeError(f"o provedor do modelo retornou HTTP {response.status_code}; "
                                "nenhuma ação foi executada")
-        return response.json()
+        return result
 
 
 def validate_choice(answer, ids):
@@ -114,7 +157,7 @@ def validate_choice(answer, ids):
 
 def action_space(actions):
     """One index per observed element; each operation has its own valid target choices."""
-    elements, indices, targets, controls = [], {}, {}, {}
+    elements, indices, targets, controls, contexts = [], {}, {}, {}, {}
     operations = {"click": "CLICK", "fill": "TYPE_TEXT", "select": "SELECT",
                   "press_enter": "PRESS_ENTER", "press_escape": "PRESS_ESCAPE"}
     for action in actions:
@@ -126,8 +169,14 @@ def action_space(actions):
         if node not in indices:
             index = str(len(elements) + 1)
             indices[node] = index
-            element = {k: action[k] for k in ("role", "value", "checked", "selected", "expanded", "href")
+            element = {k: action[k] for k in ("role", "value", "checked", "selected", "expanded", "href", "form")
                        if k in action}
+            if action.get("context"):
+                scope = action["context"]
+                owner = contexts.setdefault(scope, index)
+                element["context_reference"] = owner
+                if owner == index:
+                    element["context"] = scope
             element.update(index=index, label=action["label"].split(" → ")[0], operations=[])
             if kind == "select":
                 element["value"] = action.get("current_value", "")
@@ -156,7 +205,7 @@ def choice_margin(answer):
     return probabilities[0] - probabilities[1] if len(probabilities) > 1 else 1.0
 
 
-def _choose(state, goal, history, *, conversation=None, verification_feedback=None):
+def _choose(state, goal, history, *, conversation=None, verification_feedback=None, task_context=None):
     # A self-link without a fragment cannot advance navigation; keep real anchors and pagination.
     actions = [a for a in state["actions"] if not (
         a.get("navigation") is not False and a.get("href") == state["url"] and "#" not in a["href"])]
@@ -165,6 +214,12 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
     ineffective = {h["node"] for h in history[last_manual + 1:] if h.get("execution") == "executed"
                    and h.get("kind") == "click" and h.get("page_changed") is False
                    and h.get("fingerprint") == state["fingerprint"] and h.get("node") is not None}
+    recent = [h for h in history[last_manual + 1:] if h.get("execution") == "executed"][-2:]
+    if (len(recent) == 2 and all(h.get("kind") == "click" for h in recent)
+            and recent[0].get("node") is not None
+            and recent[0].get("node") != recent[1].get("node")
+            and recent[0].get("fingerprint") == state["fingerprint"]):
+        ineffective.add(recent[0].get("node"))  # The second click returned to the first page.
     actions = [a for a in actions if not (a["kind"] == "click" and a.get("node") in ineffective)]
     navigations = Counter(h.get("href") for h in history if h.get("execution") == "executed"
                           and h.get("source_url") == state["url"] and h.get("href"))
@@ -187,7 +242,10 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
     operations = {key: labels[key] for key in targets}
     operations.update({key: value["label"] for key, value in controls.items()})
     operations.update(DONE="Every requirement is visibly satisfied.", BLOCKED="No supported operation can progress.")
-    instructions = f"Goal: {goal}\n{NEXT_ACTION}"
+    focus = (task_context or {}).get("guidance") or {}
+    objective = focus.get("next_subgoal") or goal
+    instructions = (f"Goal: {objective}\nFollow state.policy and state.task_context. "
+                    "Choose one operation from the CURRENT page.")
     if verification_feedback:
         instructions += "\nObtain current evidence for these unmet requirements before DONE: " + json.dumps(
             verification_feedback, ensure_ascii=False)
@@ -206,13 +264,15 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
                     {
                         "element": f"[{index}] {a['label']}",
                         "current_value": a.get("current_value", a.get("value", "")),
-                        **{k: a[k] for k in ("role", "checked", "selected", "expanded") if k in a},
+                        **{k: a[k] for k in ("role", "checked", "selected", "expanded", "href") if k in a},
                     },
                     ensure_ascii=False,
                 )
                 for index, a in candidates.items()
             },
-            "instructions": f"{instructions}\nOperation: {operation}\n{TARGET}",
+            "instructions": f"Current objective: {objective}\n"
+                            f"Follow state.policy, state.goal, state.task_context and state.verification_feedback.\n"
+                            f"Operation: {operation}\n{TARGET}",
         }
     # Speculative like the target heads: consumed only when the operation is BLOCKED.
     questions["blocked_reason"] = {
@@ -223,6 +283,8 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
     body = {
         "model": os.environ.get("TYPESAFE_MODEL", "typesafe/jev-1.13"),
         "state": {
+            "goal": goal,
+            "policy": NEXT_ACTION,
             "page": {**{k: state[k] for k in ("url", "title", "text")},
                      "human_fields": state.get("human_fields", []),
                      "observation_limits": {"text_truncated": state.get("text_truncated", False),
@@ -236,9 +298,23 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
         "questions": questions,
     }
     if conversation:
-        body["state"]["conversation"] = conversation
+        body["state"]["conversation"] = conversation[-3:] if task_context else conversation
+    if task_context:
+        body["state"]["task_context"] = task_context
     if verification_feedback:
         body["state"]["verification_feedback"] = verification_feedback
+    # UTF-8 bytes are a conservative token bound; reduce candidates rather than send an oversized decision.
+    if len(json.dumps(body, ensure_ascii=False).encode()) > 30000:
+        targeted = [action for action in actions if action["kind"] in
+                    {"click", "fill", "select", "press_enter", "press_escape"}]
+        if not targeted:
+            raise ValueError("O contexto excede a janela do modelo de decisão; nenhuma ação foi executada.")
+        keep = len(targeted) // 2
+        trimmed = [*targeted[:keep], *(action for action in actions if action not in targeted)]
+        return _choose({**state, "actions": trimmed,
+                        "omitted_actions": state.get("omitted_actions", 0) + len(targeted) - keep},
+                       goal, history, conversation=conversation, verification_feedback=verification_feedback,
+                       task_context=task_context)
     started = time.perf_counter()
     result = post_json(DECISIONS_URL, openrouter_key(), body)
     answers = result.get("answers") if isinstance(result, dict) else None
@@ -289,8 +365,8 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
     }
 
 
-def field_context(goal, action, page, history):
-    return {
+def field_context(goal, action, page, history, *, task_context=None):
+    context = {
         "goal": goal,
         "field": {k: action.get(k) for k in ("label", "role", "value", "context")},
         "page": {"url": page["url"], "title": page["title"], "text": page["text"][:6000],
@@ -301,6 +377,9 @@ def field_context(goal, action, page, history):
             for h in history if h.get("execution", "executed") == "executed"
         ][-6:],
     }
+    if task_context:
+        context["task_context"] = task_context
+    return context
 
 
 def field_text(context):
@@ -310,9 +389,7 @@ def field_text(context):
 def _field_text(context):
     key = openrouter_key()
     model = os.environ.get("TEXT_MODEL", "inception/mercury-2.5")
-    reasoning = {"reasoning": {"effort": "low"}}
-    if os.environ.get("TEXT_MODEL_REASONING", "none") == "none":
-        reasoning = {"reasoning": {"enabled": False}}
+    options = model_options(model, client=CLIENT)
     started = time.perf_counter()
     result = post_json(
         CHAT_URL,
@@ -333,8 +410,7 @@ def _field_text(context):
                     },
                 },
             },
-            "provider": {"require_parameters": True},
-            **reasoning,
+            **options,
             "messages": [
                 {"role": "system", "content": TEXT_VALUE},
                 {
@@ -356,7 +432,7 @@ def _field_text(context):
     except (ValueError, KeyError, TypeError, IndexError):
         raise InvalidOutput("Text helper returned no valid field value; nothing typed.") from None
     return value, {
-        "model": model,
+        "model": result.get("model", model),
         "latency_ms": round((time.perf_counter() - started) * 1000),
         "usage": result.get("usage", {}),
     }

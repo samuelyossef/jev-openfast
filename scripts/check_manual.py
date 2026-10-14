@@ -37,12 +37,15 @@ def main():
         requests.append(context)
         calls.append({"kind": kind, "model": "offline", "status": "mocked"})
         if kind == "request":
-            return {"intent": "task", "url": "-", "reply": "Verificando a página local.", "task": context["goal"]}
+            return {"intent": "task", "url": "-", "reply": "Verificando a página local.", "task": context["goal"],
+                    "needs_planning": False, "requirements": [{"description": context["goal"],
+                        "source_quote": context["goal"], "source_turn_id": ""}]}
         if kind == "blocker":
             return {"kind": "human", "reason": "LOGIN", "description": "A página exige autenticação.",
                     "evidence": ["Senha"]}
         if kind == "verify":
-            return {"satisfied": True, "checks": [{"requirement": "Entrar", "status": "confirmed",
+            return {"satisfied": True, "checks": [{"requirement": "Entrar", "requirement_id": "r1",
+                    "status": "confirmed",
                     "evidence": ["Autenticação concluída"], "reason": "Estado atual observado."}],
                     "reply": "Autenticação confirmada."}
         raise AssertionError("Unexpected helper")
