@@ -1,9 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-14)
 
 - Agent: finish price-range searches when matching priced results are visible, and stop alternating clicks sooner.
+- Agent: preserve task requirements across decisions and verification, keep completion terminal, and report unmet requirements without restarting the browser task.
+- Models: add per-task usage and cost tracking, a preventive task budget, and a bounded specialist review for complex tasks.
 - UI: added an About page in Settings with app version, license and source link; removed the LinkedIn footer icon.
+- UI: keep model usage below request timing and collapse it, task requirements, and observed elements by default.
+- Viewer: keep the Internet preview available and temporarily disable Documents.
 - Docs: rewritten README (quick start, usage, configuration, troubleshooting, scripts, credits) with a
   screenshot; design notes now cover the chat, handoff, manual control and preview layers.
 - UI: the "page changed" verification badge and the default conversation title follow the interface language.
