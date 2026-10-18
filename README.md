@@ -227,10 +227,18 @@ More detail in [docs/design.md](docs/design.md).
 | `scripts/check_guards.py` | Real-browser checks of freshness and execution guards. | no |
 | `scripts/check_manual.py` | Real-browser checks of manual input and privacy. | no |
 | `scripts/benchmark_chat.py` | Offline chat timing comparison with mocked models. | no |
+| `scripts/load_test.py` | Bounded read-only HTTP load test of the local UI. | no |
 | `scripts/smoke.py`, `measure_flights.py`, `record_flights.py` | Live smoke test, measurement and recording. | yes |
 | `scripts/render_demo.py`, `render_fixture.py` | Render the demo video and fixture frames. | no |
 
 ## Development
+
+With the local server running, use `uv run python scripts/load_test.py` to send 5, 20, then 40
+requests/second for 10 seconds each. `--stage-seconds N` sets each stage to 1–60 seconds. The script
+checks response content and latency, reports failures and skipped requests, and saves JSON under
+`artifacts/`. It uses only GET requests and aborts if a chat task is running at startup. A concurrent
+session change fails the state-consistency check. This measures local HTTP reads, not whether the
+agent completes a browser task or whether paid model APIs are available.
 
 For a separate paid, reproducible model comparison, run
 `uv run python scripts/benchmark_models.py --live --repeats 3 --total-budget-usd 1 --task-budget-usd 0.10`.
