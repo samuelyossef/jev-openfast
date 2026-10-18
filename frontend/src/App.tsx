@@ -431,6 +431,11 @@ function App() {
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('jev.theme', theme); }, [theme]);
   useEffect(() => { localStorage.setItem('jev.preview.width', String(Math.round(previewWidth))); }, [previewWidth]);
   useEffect(() => {
+    if (!conversationNotice) return;
+    const timer = window.setTimeout(() => setConversationNotice(''), 5000);
+    return () => window.clearTimeout(timer);
+  }, [conversationNotice]);
+  useEffect(() => {
     let previousWidth = window.innerWidth;
     const onResize = () => {
       const nextWidth = window.innerWidth;
