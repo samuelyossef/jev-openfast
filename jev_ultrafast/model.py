@@ -303,7 +303,30 @@ def _choose(state, goal, history, *, conversation=None, verification_feedback=No
         body["state"]["task_context"] = task_context
     if verification_feedback:
         body["state"]["verification_feedback"] = verification_feedback
-    # UTF-8 bytes are a conservative token bound; reduce candidates rather than send an oversized decision.
+    # Long tracking URLs must not evict useful results later in document order. Compact only the
+    # model's display; target mappings and the browser's original observed actions stay untouched.
+    if len(json.dumps(body, ensure_ascii=False).encode()) > 30000:
+        def compact(value):
+            if isinstance(value, str):
+                return value if len(value) <= 180 else value[:180] + " [truncated]"
+            if isinstance(value, dict):
+                return {key: compact(child) for key, child in value.items()}
+            if isinstance(value, list):
+                return [compact(child) for child in value]
+            return value
+
+        body["state"]["elements"] = compact(elements)
+        body["state"]["page"]["observation_limits"]["element_details_truncated"] = True
+        for operation, candidates in targets.items():
+            body["questions"][operation.lower() + "_target"]["criteria"] = {
+                index: json.dumps(compact({
+                    "element": f"[{index}] {action['label']}",
+                    "current_value": action.get("current_value", action.get("value", "")),
+                    **{key: action[key] for key in ("role", "checked", "selected", "expanded", "href")
+                       if key in action},
+                }), ensure_ascii=False) for index, action in candidates.items()
+            }
+    # UTF-8 bytes are a conservative token bound; reduce candidates only after compacting details.
     if len(json.dumps(body, ensure_ascii=False).encode()) > 30000:
         targeted = [action for action in actions if action["kind"] in
                     {"click", "fill", "select", "press_enter", "press_escape"}]

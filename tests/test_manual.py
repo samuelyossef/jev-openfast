@@ -410,9 +410,14 @@ def test_vague_block_is_reconsidered_once_before_asking_the_user(session, monkey
     monkeypatch.setattr(agent, "choose", choose)
     send(session)
     session.worker.join(3)
-    assert session.phase == phase and len(feedback) == len(answers)
+    expected = len(answers) + (0 if answers == ["CAPTCHA"] else 2 if answers == ["OTHER", "OTHER"] else 1)
+    assert session.phase == phase and len(feedback) == expected
     assert any(m.get("kind") == "handoff" for m in session.messages) is (answers == ["CAPTCHA"])
-    assert feedback[0] is None and all(item[-1] == chat.RECONSIDER_BLOCKED for item in feedback[1:])
+    assert feedback[0] is None
+    if len(answers) > 1:
+        assert feedback[1][-1] == chat.RECONSIDER_BLOCKED
+    if expected > len(answers):
+        assert feedback[len(answers)]  # The independent check now guides recovery before asking the user.
     assert session.agent.browser.mutations == []
 
 

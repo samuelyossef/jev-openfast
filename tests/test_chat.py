@@ -235,7 +235,7 @@ def test_tied_decision_reobserves_once_then_executes_or_pauses(offline, monkeypa
     view = send(session, "Busque um resultado")
     assert observations[1] > observations[0]
     if persistent:
-        assert len(observations) == 2 and not browser.mutations
+        assert len(observations) == 4 and not browser.mutations
         assert view["chat_status"] == "paused" and view["manual"]["status"] == "off"
         assert view["messages"][-1]["kind"] == "technical_pause"
         assert not any(kind == "safety" for kind, _ in offline[0])
@@ -372,8 +372,9 @@ def test_repeated_stale_targets_pause_before_more_paid_helpers(offline, monkeypa
     view = send(session)
     assert view["chat_status"] == "paused"
     assert "três tentativas" in view["progress"]
-    assert len(offline[1]) == 3
-    assert settled == [True] * 3
+    assert len(offline[1]) == 6
+    assert settled == [True] * 7
+    assert sum(kind == "plan" for kind, _ in offline[0]) == 1
     assert not any(kind == "safety" for kind, _ in offline[0])
     assert not session.agent.browser.mutations
     monkeypatch.setattr(session.agent.browser, "fresh", lambda page, action=None: True)
@@ -405,8 +406,8 @@ def test_stalled_progress_checks_outcome_without_repeating_mutations(offline, mo
     assert view["chat_status"] == ("completed" if confirmed else "paused")
     assert session.agent.state["status"] == ("done" if confirmed else "ready")
     assert len(session.agent.browser.mutations) == (1 if stall == "stale" else 3)
-    assert len(offline[1]) == (4 if stall == "stale" else 3)
-    assert sum(kind == "verify" for kind, _ in offline[0]) == 1
+    assert len(offline[1]) == ((4 if confirmed else 7) if stall == "stale" else (3 if confirmed else 4))
+    assert sum(kind == "verify" for kind, _ in offline[0]) == (1 if confirmed else 2)
 
 
 @pytest.mark.parametrize(
@@ -949,7 +950,8 @@ def test_done_does_not_prove_completion(offline, setting):
 
 
 @pytest.mark.parametrize("missing_status", ["not_met", "unknown"])
-def test_incomplete_done_reports_pending_requirements_without_restarting(offline, monkeypatch, missing_status):
+@pytest.mark.parametrize("recovered", [False, True])
+def test_incomplete_done_automatically_obtains_missing_evidence(offline, monkeypatch, missing_status, recovered):
     calls, decisions, config = offline
     goal = "Abrir site e Abrir resultado; Preço"
     config["requirements"] = [{"description": name, "source_quote": name, "source_turn_id": ""}
@@ -963,7 +965,13 @@ def test_incomplete_done_reports_pending_requirements_without_restarting(offline
          "reason": "Resultado não aberto."},
         {"requirement": "Preço", "status": "unknown", "evidence": [], "reason": "Sem preço visível."}]}
     config["verify_sequence"] = [missing]
-    sequence = iter(["e1", "DONE"])
+    final = copy.deepcopy(missing)
+    if recovered:
+        final["satisfied"] = True
+        for check in final["checks"]:
+            check.update(status="confirmed", evidence=["Resultado disponível"])
+    config["verify_sequence"].append(final)
+    sequence = iter(["e1", "DONE", "e4", "DONE"])
     def choose(page, goal, history, **kwargs):
         selected = next(sequence)
         decisions.append({"goal": goal, "history": copy.deepcopy(history), **kwargs})
@@ -975,12 +983,15 @@ def test_incomplete_done_reports_pending_requirements_without_restarting(offline
     session.agent.browser.page["actions"].append({"id": "e4", "node": 4, "kind": "click",
                                                     "role": "link", "label": "Abrir resultado"})
     view = send(session, goal)
-    assert view["chat_status"] == "completed" and view["outcome"] == "incomplete"
-    assert len(view["history"]) == 1 and len(decisions) == 2
-    assert not view["messages"][-1]["verification"]["satisfied"]
-    assert "Pendências:" in view["messages"][-1]["content"]
-    assert sum(kind == "verify" for kind, _ in calls) == 1
-    assert not any(kind == "plan" for kind, _ in calls)
+    assert view["chat_status"] == "completed" and view["outcome"] == ("completed" if recovered else "incomplete")
+    assert len(view["history"]) == 2 and len(decisions) == 4
+    assert [item["choice"] for item in view["history"]] == ["e1", "e4"]
+    assert decisions[2]["verification_feedback"]
+    assert view["messages"][-1]["verification"]["satisfied"] is recovered
+    if not recovered:
+        assert "Pendências:" in view["messages"][-1]["content"]
+    assert sum(kind == "verify" for kind, _ in calls) == 2
+    assert sum(kind == "plan" for kind, _ in calls) == 1
     # Late callbacks and UI polling cannot turn a completed task back into browser execution.
     before = (len(calls), len(decisions), list(session.agent.browser.mutations))
     session._run()

@@ -72,7 +72,8 @@ def check_ui(root, scenario, passed):
                     pass  # Read-only polling can outlive a locale navigation; never repeat UI input.
                 time.sleep(0.05)
             raise AssertionError(f"UI condition not met: {expression}; phase={session.phase}; "
-                                 f"progress={session.progress}; body={browser.evaluate('document.body.innerText')[-2000:]}")
+                                 f"progress={session.progress}; "
+                                 f"body={browser.evaluate('document.body.innerText')[-2000:]}")
 
         try:
             for locale, title, cancel in [

@@ -731,7 +731,7 @@ class ChatSession:
             self.agent.state["decision"] = None
             self.agent.state["status"] = "ready"
             self._finish(pause_reason="Não encontrei uma ação segura para avançar. A tarefa está pausada; "
-                         "use Continuar para observar a página novamente.")
+                         "use Continuar para observar a página novamente.", recover=True)
             return True
         self.reconsidered_block = True
         self.agent.state["verification_feedback"] = [
@@ -828,7 +828,8 @@ class ChatSession:
                     if ambiguous_attempts:
                         self._finish(pause_reason=(
                             "As alternativas de operação ou alvo continuam empatadas. "
-                            "A tarefa foi pausada antes de executar uma ação. Use Continuar para tentar novamente."))
+                            "A tarefa foi pausada antes de executar uma ação. Use Continuar para tentar novamente."),
+                            recover=True)
                         return
                     ambiguous_attempts += 1
                     self.agent.state["page"] = self.agent.browser.observe(screenshot=False)
@@ -917,7 +918,7 @@ class ChatSession:
                         "Use Continuar quando estiver pronta."
                     )
                     if not self.pause_requested.is_set():
-                        self._finish(pause_reason=reason)
+                        self._finish(pause_reason=reason, recover=True)
                     else:
                         self._paused(reason)
                     return
@@ -931,11 +932,30 @@ class ChatSession:
             self.agent.state["status"] = "ready"
             self._finish(pause_reason=(
                 f"A tarefa foi pausada por falta de progresso: {reason}. Use Continuar para tentar novamente."
-            ))
+            ), recover=True)
             return
-        self._finish()
+        self._finish(recover=True)
 
-    def _finish(self, *, pause_reason=None):
+    def _recover(self, reason, verdict):
+        """One fresh decision round with specialist feedback; never replay a browser operation."""
+        if (self.pause_requested.is_set() or self.approved_commitment or self.manual.status != "off"
+                or len(self.agent.state["history"]) >= MAX_STEPS
+                or any(item.get("execution") in {"requested", "uncertain"}
+                       for item in self.agent.state["history"])):
+            return False
+        if not self._plan("recovery", reason):
+            return False
+        self.agent.pending_text = None
+        self.agent.state.update(status="ready", decision=None, stop_reason=None,
+                                verification_feedback=verdict.get("checks") or [{"reason": reason}])
+        self.reconsidered_block = False
+        self.agent.state["page"] = self.agent.browser.observe_settled()
+        self.progress = "Reavaliando a página para continuar a tarefa…"
+        self._publish()
+        self._run()
+        return True
+
+    def _finish(self, *, pause_reason=None, recover=False):
         if self.manual.status == "requested":
             self._paused(stage="run" if pause_reason else "finish")
             return
@@ -963,6 +983,9 @@ class ChatSession:
         if verdict.get("budget_exhausted"):
             self._paused(verdict["reason"], stage="finish", kind="technical_pause", pause_code="model_budget",
                          verification=verdict)
+            return
+        if not verdict["satisfied"] and recover and (checks or pause_reason) and self._recover(
+                pause_reason or "A conferência encontrou requisitos ainda não atendidos.", verdict):
             return
         if pause_reason and not verdict["satisfied"]:
             self._paused(pause_reason, kind="technical_pause", pause_code="no_progress", verification=verdict)
