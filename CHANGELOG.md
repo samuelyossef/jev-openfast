@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 (2026-10-18)
+
+- Agent: compact oversized element details before reducing decision candidates, so long advertising URLs
+  do not hide observed channel and result targets or cause repeated search clicks.
+- Agent: automatically review stalled tasks and premature completion once, then continue from a fresh
+  observation to obtain missing evidence. Preserve execution budgets, human intervention, uncertain
+  mutation protection, approved commitments and read-only result rechecks.
+- Validation: 348 offline tests, frontend lint/build, package build, 33 browser guard checks and 6
+  manual-control checks; the original YouTube task completed without approval or manual intervention.
+
 ## 0.2.0 (2026-10-14)
 
 - Agent: finish price-range searches when matching priced results are visible, and stop alternating clicks sooner.
