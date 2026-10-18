@@ -37,8 +37,9 @@ is `TYPE_TEXT`.
 - **Page questions.** Asking about the open page reads a fresh observation. It never clicks or types.
 - **Approval for external commitments.** Sending, submitting, publishing, buying, paying, booking, deleting or
   changing account settings pauses and asks you first. Approval is renewed if the page changes.
-- **Terminal results.** The final check never restarts browser actions. Unconfirmed results show pending requirements;
-  a new request or an explicit continuation of a paused task is required to navigate again.
+- **Automatic recovery.** A stalled task or premature completion gets one fresh specialist review and decision
+  round to obtain missing evidence. Uncertain actions and approved external commitments are never replayed.
+  Manual result rechecks remain read-only; exhausted budgets or persistent failures are reported explicitly.
 - **Independent verification.** After `DONE`, the page is checked again and the result is shown as confirmed,
   not met or unknown, with quoted evidence. A `DONE` choice is never treated as proof.
 - **Take over when it matters.** When JEV needs a login, CAPTCHA, verification code or personal data, a card
@@ -64,7 +65,7 @@ is `TYPE_TEXT`.
 - **Task context.** Original requirements are shared by decision, field, safety and verification helpers;
   each requirement must be checked explicitly. Numeric prices, quantities and literal dates use associated
   observed evidence. Observation references are stored locally and become stale after a restart.
-- **Bounded specialist.** Complex tasks may use one initial specialist review.
+- **Bounded specialist.** Complex tasks may use one initial specialist review and one recovery review if needed.
   The specialist supplies objectives and evidence to seek; only Jev selects executable observed targets.
   Model attempts, usage and estimated/confirmed costs appear in execution details.
   If Mercury returns its specific provider-unavailable error, the remaining read-only attempt uses Qwen3

@@ -271,6 +271,32 @@ def test_shared_policy_preserves_results_near_end_of_large_observation(monkeypat
     model.choose(observed, "Find the relevant result", [])
 
 
+def test_tracking_urls_do_not_remove_later_result_targets(monkeypatch):
+    observed = page()
+    for index in range(28):
+        observed["actions"].append({
+            "id": f"result-{index}", "kind": "click", "node": 100 + index,
+            "role": "link", "label": f"Result {index}",
+            "href": f"https://example.test/result/{index}?tracking=" + "x" * 6000,
+        })
+    original = deepcopy(observed)
+
+    def post(_url, _key, body):
+        assert len(json.dumps(body, ensure_ascii=False).encode()) <= 30000
+        assert body["state"]["page"]["observation_limits"]["omitted_actions"] == 0
+        assert body["state"]["page"]["observation_limits"]["element_details_truncated"]
+        candidates = body["questions"]["click_target"]["criteria"]
+        last = next(key for key, value in candidates.items() if "Result 27" in value)
+        return {"answers": {"operation": choice(body["questions"]["operation"]["criteria"], "CLICK"),
+                            "click_target": choice(candidates, last)}}
+
+    monkeypatch.setattr(model, "openrouter_key", lambda: "offline")
+    monkeypatch.setattr(model, "post_json", post)
+    result = model.choose(observed, "Find Result 27", [])
+    assert result["choice"] == "result-27"
+    assert observed == original
+
+
 def test_specialist_focus_reaches_operation_and_target_without_replacing_original_goal(monkeypatch):
     def post(_url, _key, body):
         assert body["state"]["goal"] == "Find a result and compare its price"
