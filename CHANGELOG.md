@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Remove the dormant Office-document viewer, storage code, and its dependencies from the web-only project. Document endpoints continue to return 404.
+
 ## 0.2.1 (2026-10-18)
 
 - Agent: compact oversized element details before reducing decision candidates, so long advertising URLs

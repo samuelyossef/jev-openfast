@@ -110,7 +110,7 @@ time to check Python, the key, the port and Chrome, and `uv run jev --version` f
 
 ### Viewer documents
 
-Documentos is temporarily unavailable. The Viewer shows only the Internet preview, and document upload, creation, revision, download and deletion endpoints are disabled. The document implementation and any files already stored locally are preserved for future work.
+This web-only release does not include document upload, Office-file viewing, spreadsheet editing, or document-management features. These capabilities are maintained separately from this project.
 
 ## Using it
 
